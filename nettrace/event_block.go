@@ -10,15 +10,15 @@ import (
 // BlobBlock contains a set of Blobs.
 type BlobBlock struct {
 	Header BlobBlockHeader
-	// Payload contains EventBlobs - serialized fragments which represent
+	// Payload contains Blobs - serialized fragments which represent
 	// actual events and metadata records.
 	Payload *bytes.Buffer
 
 	compressed bool
 	// lastHeader holds the most recent Blob header: this is used if the
 	// block uses compressed headers format.
-	lastHeader BlobHeader
-	extract    func(*Blob) error
+	lastHeader    BlobHeader
+	extractHeader func(*Blob) error
 }
 
 type BlobBlockHeader struct {
@@ -36,7 +36,7 @@ const eventBlockHeaderLength = int32(unsafe.Sizeof(BlobBlockHeader{}))
 
 type Blob struct {
 	Header BlobHeader
-	// Payload contains Event and Metadata record.
+	// Payload contains Event and Metadata records.
 	Payload *bytes.Buffer
 	sorted  bool
 }
@@ -77,33 +77,33 @@ const (
 	flagPayloadSize
 )
 
-func (b BlobBlock) IsCompressed() bool { return b.compressed }
+func (b *BlobBlock) IsCompressed() bool { return b.compressed }
 
-func (b Blob) IsSorted() bool { return b.sorted }
+func (b *Blob) IsSorted() bool { return b.sorted }
 
-func BlobBlockFromObject(o Object) (BlobBlock, error) {
+func BlobBlockFromObject(o Object) (*BlobBlock, error) {
 	p := parser{Reader: o.Payload}
 	var b BlobBlock
 	p.read(&b.Header)
 	b.compressed = b.Header.Flags&0x0001 != 0
 	if b.compressed {
-		b.extract = b.readRecordHeaderCompressed
+		b.extractHeader = b.readBlobHeaderCompressed
 	} else {
-		b.extract = b.readRecordHeader
+		b.extractHeader = b.readBlobHeader
 	}
 	// Skip header padding.
 	padLen := int32(b.Header.Size) - eventBlockHeaderLength
 	if padLen > 0 {
 		o.Payload.Next(int(padLen))
 	}
-	// Given that blocks are to be processed sequentially, there is no
-	// need for a re-slicing the underlying buffer.
+	// Given that blocks are to be processed sequentially,
+	// there is no need for a copy.
 	b.Payload = o.Payload
-	return b, p.error()
+	return &b, p.error()
 }
 
-func (b *BlobBlock) Next(e *Blob) error {
-	err := b.extract(e)
+func (b *BlobBlock) Next(blob *Blob) error {
+	err := b.extractHeader(blob)
 	switch {
 	default:
 	case errors.Is(err, io.EOF):
@@ -111,54 +111,54 @@ func (b *BlobBlock) Next(e *Blob) error {
 	case err != nil:
 		return err
 	}
-	pb := b.Payload.Next(int(e.Header.PayloadSize))
-	e.Payload = bytes.NewBuffer(pb)
+	pb := b.Payload.Next(int(blob.Header.PayloadSize))
+	blob.Payload = bytes.NewBuffer(pb)
 	return nil
 }
 
-func (b *BlobBlock) readRecordHeader(e *Blob) error {
+func (b *BlobBlock) readBlobHeader(blob *Blob) error {
 	p := parser{Reader: b.Payload}
-	p.read(e)
+	p.read(blob)
 	// In the context of an EventBlock the low 31 bits are a foreign key to the
 	// event's metadata. In the context of a metadata block the low 31 bits are
 	// always zeroed. The high bit is the IsSorted flag.
-	e.Header.MetadataID &= 0x7FFF
-	e.sorted = uint32(e.Header.MetadataID)&0x8000 == 0
+	blob.Header.MetadataID &= 0x7FFF
+	blob.sorted = uint32(blob.Header.MetadataID)&0x8000 == 0
 	return p.error()
 }
 
-func (b *BlobBlock) readRecordHeaderCompressed(e *Blob) error {
-	e.Header = b.lastHeader
+func (b *BlobBlock) readBlobHeaderCompressed(blob *Blob) error {
+	blob.Header = b.lastHeader
 	p := parser{Reader: b.Payload}
 	var flags compressedHeaderFlag
 	p.read(&flags)
-	e.sorted = flags&flagIsSorted != 0
+	blob.sorted = flags&flagIsSorted != 0
 	if flags&flagMetadataID != 0 {
-		e.Header.MetadataID = int32(p.uvarint())
+		blob.Header.MetadataID = int32(p.uvarint())
 	}
 	if flags&flagCaptureThreadAndSequence != 0 {
-		e.Header.SequenceNumber = int32(p.uvarint()) + 1
-		e.Header.CaptureThreadID = long(p.uvarint())
-		e.Header.CaptureProcNumber = int32(p.uvarint())
-	} else if e.Header.MetadataID != 0 {
-		e.Header.SequenceNumber++
+		blob.Header.SequenceNumber = int32(p.uvarint()) + 1
+		blob.Header.CaptureThreadID = long(p.uvarint())
+		blob.Header.CaptureProcNumber = int32(p.uvarint())
+	} else if blob.Header.MetadataID != 0 {
+		blob.Header.SequenceNumber++
 	}
 	if flags&flagThreadID != 0 {
-		e.Header.ThreadID = long(p.uvarint())
+		blob.Header.ThreadID = long(p.uvarint())
 	}
 	if flags&flagStackID != 0 {
-		e.Header.StackID = int32(p.uvarint())
+		blob.Header.StackID = int32(p.uvarint())
 	}
-	e.Header.TimeStamp += long(p.uvarint())
+	blob.Header.TimeStamp += long(p.uvarint())
 	if flags&flagActivityID != 0 {
-		p.read(&e.Header.ActivityID)
+		p.read(&blob.Header.ActivityID)
 	}
 	if flags&flagRelatedActivityID != 0 {
-		p.read(&e.Header.RelatedActivityID)
+		p.read(&blob.Header.RelatedActivityID)
 	}
 	if flags&flagPayloadSize != 0 {
-		e.Header.PayloadSize = int32(p.uvarint())
+		blob.Header.PayloadSize = int32(p.uvarint())
 	}
-	b.lastHeader = e.Header
+	b.lastHeader = blob.Header
 	return p.error()
 }
