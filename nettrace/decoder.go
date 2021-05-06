@@ -23,7 +23,7 @@ var (
 	ErrUnexpectedTag            = errors.New("unexpected tag")
 )
 
-const Version int32 = 4
+const Version int32 = 5
 
 // For convenience, Microsoft type names are used.
 // https://docs.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/built-in-types
@@ -34,9 +34,7 @@ type (
 	// int int32
 )
 
-type Decoder struct {
-	r *netTraceReader
-}
+type Decoder struct{ r *netTraceReader }
 
 func NewDecoder(r io.Reader) *Decoder {
 	return &Decoder{r: &netTraceReader{inner: r}}
@@ -57,7 +55,7 @@ type Object struct {
 	Type                 ObjectType
 	Version              int32
 	MinimumReaderVersion int32
-	Data                 io.Reader
+	Payload              *bytes.Buffer
 }
 
 type ObjectType string
@@ -174,7 +172,7 @@ func (d *Decoder) OpenTrace() (*Trace, error) {
 		return nil, fmt.Errorf("%w: %s", ErrUnexpectedObjectType, o.Type)
 	}
 	var trace Trace
-	if err = d.readFrom(o.Data, &trace); err != nil {
+	if err = d.readFrom(o.Payload, &trace); err != nil {
 		return nil, fmt.Errorf("invalid trace object: %w", err)
 	}
 	return &trace, nil
@@ -244,7 +242,7 @@ func (d *Decoder) readObject(o *Object) error {
 		return fmt.Errorf("reading type object: %w", err)
 	}
 
-	o.Data, err = d.objectReader(objectType)
+	o.Payload, err = d.objectPayload(objectType)
 	if err != nil {
 		return fmt.Errorf("reading object payload: %w", err)
 	}
@@ -272,17 +270,17 @@ func (d *Decoder) expectEndTag() error {
 	return nil
 }
 
-func (d *Decoder) objectReader(t ObjectType) (io.Reader, error) {
+func (d *Decoder) objectPayload(t ObjectType) (*bytes.Buffer, error) {
 	switch t {
 	case ObjectTypeTrace:
 		s := make([]byte, traceLen)
 		if _, err := io.ReadFull(d.r, s); err != nil {
 			return nil, err
 		}
-		return bytes.NewReader(s), nil
+		return bytes.NewBuffer(s), nil
 
 	case ObjectTypeMetadataBlock, ObjectTypeEventBlock, ObjectTypeSPBlock, ObjectTypeStackBlock:
-		return d.blockReader()
+		return d.blockPayload()
 
 	default:
 		// Should never happen as we perform the type check in advance.
@@ -290,7 +288,7 @@ func (d *Decoder) objectReader(t ObjectType) (io.Reader, error) {
 	}
 }
 
-func (d *Decoder) blockReader() (io.Reader, error) {
+func (d *Decoder) blockPayload() (*bytes.Buffer, error) {
 	// Block Layout:
 	//   1. BlockSize int32 - Size of the block in bytes starting after the alignment padding
 	//   2. 0 padding to reach 4 byte alignment.
@@ -311,5 +309,5 @@ func (d *Decoder) blockReader() (io.Reader, error) {
 	if _, err := io.ReadFull(d.r, blockData); err != nil {
 		return nil, err
 	}
-	return bytes.NewReader(blockData), nil
+	return bytes.NewBuffer(blockData), nil
 }

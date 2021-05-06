@@ -28,7 +28,13 @@ func TestDecode(t *testing.T) {
 		case errors.Is(err, io.EOF):
 			return
 		case err == nil:
-			t.Logf("%s: %#v", o.Type, o)
+			switch o.Type {
+			case nettrace.ObjectTypeMetadataBlock, nettrace.ObjectTypeEventBlock:
+				e, err := nettrace.EventBlockFromObject(o)
+				requireNoError(t, err)
+				_, err = e.Events()
+				requireNoError(t, err)
+			}
 		default:
 			requireNoError(t, err)
 		}
