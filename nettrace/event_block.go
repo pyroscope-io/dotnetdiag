@@ -7,19 +7,21 @@ import (
 	"unsafe"
 )
 
-// EventBlock contains a set of events.
-type EventBlock struct {
-	Header EventBlockHeader
-	// Payload contains EventBlobs - serialized fragments which represent actual
-	// events and metadata records.
+// BlobBlock contains a set of Blobs.
+type BlobBlock struct {
+	Header BlobBlockHeader
+	// Payload contains EventBlobs - serialized fragments which represent
+	// actual events and metadata records.
 	Payload *bytes.Buffer
+
+	compressed bool
+	// lastHeader holds the most recent Blob header: this is used if the
+	// block uses compressed headers format.
+	lastHeader BlobHeader
+	extract    func(*Blob) error
 }
 
-func (b EventBlock) IsCompressed() bool {
-	return b.Header.Flags&0x0001 != 0
-}
-
-type EventBlockHeader struct {
+type BlobBlockHeader struct {
 	// Size of the header including this field.
 	Size  short
 	Flags short
@@ -30,18 +32,17 @@ type EventBlockHeader struct {
 	// Padding: optional reserved space to reach Size bytes.
 }
 
-const eventBlockHeaderLength = int32(unsafe.Sizeof(EventBlockHeader{}))
+const eventBlockHeaderLength = int32(unsafe.Sizeof(BlobBlockHeader{}))
 
-type EventBlob struct {
-	Header EventBlobHeader
-	sorted bool
-	// TODO: keep Event and Metadata structures here or just Payload?
+type Blob struct {
+	Header BlobHeader
+	// Payload contains Event and Metadata record.
+	Payload *bytes.Buffer
+	sorted  bool
 }
 
-func (b EventBlob) IsSorted() bool { return b.sorted }
-
-// EventBlobHeader used for both compressed and uncompressed formats.
-type EventBlobHeader struct {
+// BlobHeader used for both compressed and uncompressed blobs.
+type BlobHeader struct {
 	// EventSize specifies record size not counting this field.
 	EventSize         int32
 	MetadataID        int32
@@ -76,12 +77,20 @@ const (
 	flagPayloadSize
 )
 
-// EventBlockFromObject ...
-// TODO: refactor API.
-func EventBlockFromObject(o Object) (EventBlock, error) {
+func (b BlobBlock) IsCompressed() bool { return b.compressed }
+
+func (b Blob) IsSorted() bool { return b.sorted }
+
+func BlobBlockFromObject(o Object) (BlobBlock, error) {
 	p := parser{Reader: o.Payload}
-	var b EventBlock
+	var b BlobBlock
 	p.read(&b.Header)
+	b.compressed = b.Header.Flags&0x0001 != 0
+	if b.compressed {
+		b.extract = b.readRecordHeaderCompressed
+	} else {
+		b.extract = b.readRecordHeader
+	}
 	// Skip header padding.
 	padLen := int32(b.Header.Size) - eventBlockHeaderLength
 	if padLen > 0 {
@@ -93,45 +102,21 @@ func EventBlockFromObject(o Object) (EventBlock, error) {
 	return b, p.error()
 }
 
-// Events ...
-// TODO: refactor API:
-//   func (b BlobBlock) Next(*Blob) error
-func (b *EventBlock) Events() ([]EventBlob, error) {
-	var fill func(*EventBlob) error
-	if b.IsCompressed() {
-		fill = b.readRecordHeaderCompressed
-	} else {
-		fill = b.readRecordHeader
+func (b *BlobBlock) Next(e *Blob) error {
+	err := b.extract(e)
+	switch {
+	default:
+	case errors.Is(err, io.EOF):
+		return io.EOF
+	case err != nil:
+		return err
 	}
-
-	events := make([]EventBlob, 0)
-	var previousHeader EventBlobHeader
-
-loop:
-	for {
-		e := EventBlob{Header: previousHeader}
-		err := fill(&e)
-		switch {
-		case err == nil:
-		case errors.Is(err, io.EOF):
-			break loop
-		default:
-			return nil, err
-		}
-
-		// TODO: metadata processing.
-		record := bytes.NewBuffer(b.Payload.Next(int(e.Header.PayloadSize)))
-		var h MetadataHeader
-		err = readMetadataHeader(record, &h)
-
-		events = append(events, e)
-		previousHeader = e.Header
-	}
-
-	return events, nil
+	pb := b.Payload.Next(int(e.Header.PayloadSize))
+	e.Payload = bytes.NewBuffer(pb)
+	return nil
 }
 
-func (b EventBlock) readRecordHeader(e *EventBlob) error {
+func (b *BlobBlock) readRecordHeader(e *Blob) error {
 	p := parser{Reader: b.Payload}
 	p.read(e)
 	// In the context of an EventBlock the low 31 bits are a foreign key to the
@@ -142,7 +127,8 @@ func (b EventBlock) readRecordHeader(e *EventBlob) error {
 	return p.error()
 }
 
-func (b EventBlock) readRecordHeaderCompressed(e *EventBlob) error {
+func (b *BlobBlock) readRecordHeaderCompressed(e *Blob) error {
+	e.Header = b.lastHeader
 	p := parser{Reader: b.Payload}
 	var flags compressedHeaderFlag
 	p.read(&flags)
@@ -173,5 +159,6 @@ func (b EventBlock) readRecordHeaderCompressed(e *EventBlob) error {
 	if flags&flagPayloadSize != 0 {
 		e.Header.PayloadSize = int32(p.uvarint())
 	}
+	b.lastHeader = e.Header
 	return p.error()
 }

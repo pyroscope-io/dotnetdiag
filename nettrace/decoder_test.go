@@ -30,9 +30,7 @@ func TestDecode(t *testing.T) {
 		case err == nil:
 			switch o.Type {
 			case nettrace.ObjectTypeMetadataBlock, nettrace.ObjectTypeEventBlock:
-				e, err := nettrace.EventBlockFromObject(o)
-				requireNoError(t, err)
-				_, err = e.Events()
+				_, err = nettrace.BlobBlockFromObject(o)
 				requireNoError(t, err)
 			}
 		default:
