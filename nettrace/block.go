@@ -2,8 +2,11 @@ package nettrace
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
+	"unicode/utf16"
 	"unsafe"
 )
 
@@ -19,6 +22,7 @@ type BlobBlock struct {
 	// block uses compressed headers format.
 	lastHeader    BlobHeader
 	extractHeader func(*Blob) error
+	*parser
 }
 
 type BlobBlockHeader struct {
@@ -57,6 +61,23 @@ type BlobHeader struct {
 	PayloadSize       int32
 }
 
+type StackBlock struct {
+	FirstID int32
+	Stacks  []Stack
+}
+
+type Stack []byte
+
+type SequencePointBlock struct {
+	TimeStamp long
+	Threads   []Thread
+}
+
+type Thread struct {
+	ThreadID       long
+	SequenceNumber int32
+}
+
 type compressedHeaderFlag byte
 
 // The section lists compressed header flags: if otherwise specified, every
@@ -82,7 +103,7 @@ func (b *BlobBlock) IsCompressed() bool { return b.compressed }
 func (b *Blob) IsSorted() bool { return b.sorted }
 
 func BlobBlockFromObject(o Object) (*BlobBlock, error) {
-	p := parser{Reader: o.Payload}
+	p := parser{Buffer: o.Payload}
 	var b BlobBlock
 	p.read(&b.Header)
 	b.compressed = b.Header.Flags&0x0001 != 0
@@ -99,6 +120,7 @@ func BlobBlockFromObject(o Object) (*BlobBlock, error) {
 	// Given that blocks are to be processed sequentially,
 	// there is no need for a copy.
 	b.Payload = o.Payload
+	b.parser = &p
 	return &b, p.error()
 }
 
@@ -117,48 +139,118 @@ func (b *BlobBlock) Next(blob *Blob) error {
 }
 
 func (b *BlobBlock) readBlobHeader(blob *Blob) error {
-	p := parser{Reader: b.Payload}
-	p.read(blob)
+	b.read(blob)
 	// In the context of an EventBlock the low 31 bits are a foreign key to the
 	// event's metadata. In the context of a metadata block the low 31 bits are
 	// always zeroed. The high bit is the IsSorted flag.
 	blob.Header.MetadataID &= 0x7FFF
 	blob.sorted = uint32(blob.Header.MetadataID)&0x8000 == 0
-	return p.error()
+	return b.error()
 }
 
 func (b *BlobBlock) readBlobHeaderCompressed(blob *Blob) error {
 	blob.Header = b.lastHeader
-	p := parser{Reader: b.Payload}
 	var flags compressedHeaderFlag
-	p.read(&flags)
+	b.read(&flags)
 	blob.sorted = flags&flagIsSorted != 0
 	if flags&flagMetadataID != 0 {
-		blob.Header.MetadataID = int32(p.uvarint())
+		blob.Header.MetadataID = int32(b.uvarint())
 	}
 	if flags&flagCaptureThreadAndSequence != 0 {
-		blob.Header.SequenceNumber = int32(p.uvarint()) + 1
-		blob.Header.CaptureThreadID = long(p.uvarint())
-		blob.Header.CaptureProcNumber = int32(p.uvarint())
+		blob.Header.SequenceNumber = int32(b.uvarint()) + 1
+		blob.Header.CaptureThreadID = long(b.uvarint())
+		blob.Header.CaptureProcNumber = int32(b.uvarint())
 	} else if blob.Header.MetadataID != 0 {
 		blob.Header.SequenceNumber++
 	}
 	if flags&flagThreadID != 0 {
-		blob.Header.ThreadID = long(p.uvarint())
+		blob.Header.ThreadID = long(b.uvarint())
 	}
 	if flags&flagStackID != 0 {
-		blob.Header.StackID = int32(p.uvarint())
+		blob.Header.StackID = int32(b.uvarint())
 	}
-	blob.Header.TimeStamp += long(p.uvarint())
+	blob.Header.TimeStamp += long(b.uvarint())
 	if flags&flagActivityID != 0 {
-		p.read(&blob.Header.ActivityID)
+		b.read(&blob.Header.ActivityID)
 	}
 	if flags&flagRelatedActivityID != 0 {
-		p.read(&blob.Header.RelatedActivityID)
+		b.read(&blob.Header.RelatedActivityID)
 	}
 	if flags&flagPayloadSize != 0 {
-		blob.Header.PayloadSize = int32(p.uvarint())
+		blob.Header.PayloadSize = int32(b.uvarint())
 	}
 	b.lastHeader = blob.Header
-	return p.error()
+	return b.error()
+}
+
+func StackBlockFromObject(o Object) (*StackBlock, error) {
+	var b StackBlock
+	var count, size int32
+	p := parser{Buffer: o.Payload}
+	p.read(&b.FirstID)
+	p.read(&count)
+	b.Stacks = make([]Stack, count)
+	for i := int32(0); i < count; i++ {
+		p.read(&size)
+		b.Stacks[i] = o.Payload.Next(int(size))
+	}
+	return &b, p.error()
+}
+
+func SequencePointBlockFromObject(o Object) (*SequencePointBlock, error) {
+	var b SequencePointBlock
+	var count int32
+	p := parser{Buffer: o.Payload}
+	p.read(&b.TimeStamp)
+	p.read(&count)
+	b.Threads = make([]Thread, count)
+	for i := int32(0); i < count; i++ {
+		var t Thread
+		p.read(&t)
+		b.Threads[i] = t
+	}
+	return &b, p.error()
+}
+
+// TODO: refactor
+type parser struct {
+	*bytes.Buffer
+	errs []error
+}
+
+func (p *parser) error() error {
+	if len(p.errs) != 0 {
+		return fmt.Errorf("parser: %w", p.errs[0])
+	}
+	return nil
+}
+
+func (p *parser) read(v interface{}) {
+	if err := binary.Read(p, binary.LittleEndian, v); err != nil {
+		p.errs = append(p.errs, err)
+	}
+}
+
+func (p *parser) uvarint() uint64 {
+	n, err := binary.ReadUvarint(p)
+	if err != nil {
+		p.errs = append(p.errs, err)
+	}
+	return n
+}
+
+func (p *parser) utf16nts() string {
+	s := make([]uint16, 0, 64)
+	var c uint16
+	for {
+		if p.errs != nil {
+			return ""
+		}
+		p.read(&c)
+		if c == 0x0 {
+			break
+		}
+		s = append(s, c)
+	}
+	return string(utf16.Decode(s))
 }
