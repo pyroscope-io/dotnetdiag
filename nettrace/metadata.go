@@ -2,7 +2,6 @@ package nettrace
 
 import (
 	"errors"
-	"fmt"
 	"io"
 
 	"github.com/pyroscope-io/dotnetdiag/nettrace/typecode"
@@ -12,7 +11,7 @@ var ErrNotImplemented = errors.New("not implemented")
 
 type Metadata struct {
 	Header  MetadataHeader
-	Payload *MetadataPayload
+	Payload MetadataPayload
 	p       *parser
 }
 
@@ -37,9 +36,8 @@ const (
 )
 
 type MetadataPayload struct {
-	FieldCount int32
-	Fields     []MetadataField
-	Tags       []MetadataTag // V5 and later only.
+	Fields []MetadataField
+	Tags   []MetadataTag // V5 and later only.
 }
 
 type MetadataField struct {
@@ -49,15 +47,13 @@ type MetadataField struct {
 	// For primitive types and strings Payload is not present, however if TypeCode is Object (1)
 	// then Payload is another payload description (that is a field count, followed by a list of
 	// field definitions). These can be nested to arbitrary depth.
-	Payload *MetadataPayload
+	Payload MetadataPayload
 	Name    string
 }
 
 type MetadataTag struct {
-	PayloadBytes int32
-	Kind         MetadataTagKind
-	OpCode       byte
-	FieldCount   int32
+	Kind   MetadataTagKind
+	OpCode byte
 }
 
 type MetadataTagKind byte
@@ -69,10 +65,7 @@ const (
 )
 
 func MetadataFromBlob(blob Blob) (*Metadata, error) {
-	md := Metadata{
-		Payload: new(MetadataPayload),
-		p:       &parser{Buffer: blob.Payload},
-	}
+	md := Metadata{p: &parser{Buffer: blob.Payload}}
 	md.p.read(&md.Header.MetaDataID)
 	md.Header.ProviderName = md.p.utf16nts()
 	md.p.read(&md.Header.EventID)
@@ -81,27 +74,28 @@ func MetadataFromBlob(blob Blob) (*Metadata, error) {
 	md.p.read(&md.Header.Version)
 	md.p.read(&md.Header.Level)
 
-	if err := md.readMetadataPayload(md.Payload); err != nil {
-		return nil, err
-	}
-	if _, err := blob.Payload.ReadByte(); err != io.EOF {
-		return nil, fmt.Errorf("%w: V5 matadata payload", ErrNotImplemented)
-	}
-	if err := md.p.error(); err != nil {
+	if err := md.readPayload(&md.Payload); err != nil {
 		return nil, err
 	}
 
-	return &md, nil
+	// Version 5 specifies that following the FieldCount number of fields
+	// there are an optional set of metadata tags, and if the metadata event
+	// specifies a TagKindV2Params tag, the event must have an empty V1
+	// parameter FieldCount and no field definitions. Version 5 is not
+	// supported yet, therefore we expect the buffer is read to the end.
+	if _, err := md.p.ReadByte(); err != io.EOF {
+		return nil, ErrNotImplemented
+	}
+
+	return &md, md.p.error()
 }
 
-func (md *Metadata) readMetadataPayload(mp *MetadataPayload) error {
-	md.p.read(&mp.FieldCount)
-	if mp.FieldCount == 0 {
-		return md.p.error()
-	}
-	for i := int32(0); i < mp.FieldCount; i++ {
+func (md *Metadata) readPayload(mp *MetadataPayload) error {
+	var count int32
+	md.p.read(&count)
+	for i := int32(0); i < count; i++ {
 		var f MetadataField
-		if err := md.readMetadataField(&f); err != nil {
+		if err := md.readField(&f); err != nil {
 			return err
 		}
 		mp.Fields = append(mp.Fields, f)
@@ -109,17 +103,19 @@ func (md *Metadata) readMetadataPayload(mp *MetadataPayload) error {
 	return md.p.error()
 }
 
-func (md *Metadata) readMetadataField(f *MetadataField) error {
+func (md *Metadata) readField(f *MetadataField) error {
 	md.p.read(&f.TypeCode)
 	switch f.TypeCode {
 	default:
 		// Built-in types do not have payload.
 	case typecode.Array:
-		return fmt.Errorf("%w: V5", ErrNotImplemented)
+		return ErrNotImplemented
 	case typecode.Object:
-		if err := md.readMetadataPayload(f.Payload); err != nil {
+		var p MetadataPayload
+		if err := md.readPayload(&p); err != nil {
 			return err
 		}
+		f.Payload = p
 	}
 	f.Name = md.p.utf16nts()
 	return md.p.error()

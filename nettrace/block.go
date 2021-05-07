@@ -22,7 +22,8 @@ type BlobBlock struct {
 	// block uses compressed headers format.
 	lastHeader    BlobHeader
 	extractHeader func(*Blob) error
-	*parser
+
+	p *parser
 }
 
 type BlobBlockHeader struct {
@@ -47,8 +48,7 @@ type Blob struct {
 
 // BlobHeader used for both compressed and uncompressed blobs.
 type BlobHeader struct {
-	// EventSize specifies record size not counting this field.
-	EventSize         int32
+	_                 int32 // Unused: Size specifies record size not counting this field.
 	MetadataID        int32
 	SequenceNumber    int32
 	ThreadID          long
@@ -108,19 +108,17 @@ func BlobBlockFromObject(o Object) (*BlobBlock, error) {
 	p.read(&b.Header)
 	b.compressed = b.Header.Flags&0x0001 != 0
 	if b.compressed {
-		b.extractHeader = b.readBlobHeaderCompressed
+		b.extractHeader = b.readHeaderCompressed
 	} else {
-		b.extractHeader = b.readBlobHeader
+		b.extractHeader = b.readHeader
 	}
 	// Skip header padding.
 	padLen := int32(b.Header.Size) - eventBlockHeaderLength
 	if padLen > 0 {
 		o.Payload.Next(int(padLen))
 	}
-	// Given that blocks are to be processed sequentially,
-	// there is no need for a copy.
 	b.Payload = o.Payload
-	b.parser = &p
+	b.p = &p
 	return &b, p.error()
 }
 
@@ -138,49 +136,49 @@ func (b *BlobBlock) Next(blob *Blob) error {
 	return nil
 }
 
-func (b *BlobBlock) readBlobHeader(blob *Blob) error {
-	b.read(blob)
+func (b *BlobBlock) readHeader(blob *Blob) error {
+	b.p.read(blob)
 	// In the context of an EventBlock the low 31 bits are a foreign key to the
 	// event's metadata. In the context of a metadata block the low 31 bits are
 	// always zeroed. The high bit is the IsSorted flag.
 	blob.Header.MetadataID &= 0x7FFF
 	blob.sorted = uint32(blob.Header.MetadataID)&0x8000 == 0
-	return b.error()
+	return b.p.error()
 }
 
-func (b *BlobBlock) readBlobHeaderCompressed(blob *Blob) error {
+func (b *BlobBlock) readHeaderCompressed(blob *Blob) error {
 	blob.Header = b.lastHeader
 	var flags compressedHeaderFlag
-	b.read(&flags)
+	b.p.read(&flags)
 	blob.sorted = flags&flagIsSorted != 0
 	if flags&flagMetadataID != 0 {
-		blob.Header.MetadataID = int32(b.uvarint())
+		blob.Header.MetadataID = int32(b.p.uvarint())
 	}
 	if flags&flagCaptureThreadAndSequence != 0 {
-		blob.Header.SequenceNumber = int32(b.uvarint()) + 1
-		blob.Header.CaptureThreadID = long(b.uvarint())
-		blob.Header.CaptureProcNumber = int32(b.uvarint())
+		blob.Header.SequenceNumber = int32(b.p.uvarint()) + 1
+		blob.Header.CaptureThreadID = long(b.p.uvarint())
+		blob.Header.CaptureProcNumber = int32(b.p.uvarint())
 	} else if blob.Header.MetadataID != 0 {
 		blob.Header.SequenceNumber++
 	}
 	if flags&flagThreadID != 0 {
-		blob.Header.ThreadID = long(b.uvarint())
+		blob.Header.ThreadID = long(b.p.uvarint())
 	}
 	if flags&flagStackID != 0 {
-		blob.Header.StackID = int32(b.uvarint())
+		blob.Header.StackID = int32(b.p.uvarint())
 	}
-	blob.Header.TimeStamp += long(b.uvarint())
+	blob.Header.TimeStamp += long(b.p.uvarint())
 	if flags&flagActivityID != 0 {
-		b.read(&blob.Header.ActivityID)
+		b.p.read(&blob.Header.ActivityID)
 	}
 	if flags&flagRelatedActivityID != 0 {
-		b.read(&blob.Header.RelatedActivityID)
+		b.p.read(&blob.Header.RelatedActivityID)
 	}
 	if flags&flagPayloadSize != 0 {
-		blob.Header.PayloadSize = int32(b.uvarint())
+		blob.Header.PayloadSize = int32(b.p.uvarint())
 	}
 	b.lastHeader = blob.Header
-	return b.error()
+	return b.p.error()
 }
 
 func StackBlockFromObject(o Object) (*StackBlock, error) {

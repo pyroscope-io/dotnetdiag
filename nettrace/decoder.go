@@ -23,7 +23,7 @@ var (
 	ErrUnexpectedTag            = errors.New("unexpected tag")
 )
 
-const Version int32 = 5
+const Version int32 = 4
 
 // For convenience, Microsoft type names are used.
 // https://docs.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/built-in-types
