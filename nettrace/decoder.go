@@ -185,6 +185,10 @@ func (d *Decoder) Decode(o *Object) error {
 	return d.readObject(o)
 }
 
+func (d *Decoder) Offset() uint64 {
+	return d.r.offset
+}
+
 func (d *Decoder) read(v interface{}) error {
 	return d.readFrom(d.r, v)
 }
