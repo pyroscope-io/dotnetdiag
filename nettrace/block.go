@@ -66,7 +66,10 @@ type StackBlock struct {
 	Stacks  []Stack
 }
 
-type Stack []byte
+type Stack struct {
+	ID   int32
+	Data []byte
+}
 
 type SequencePointBlock struct {
 	TimeStamp long
@@ -188,9 +191,13 @@ func StackBlockFromObject(o Object) (*StackBlock, error) {
 	p.read(&b.FirstID)
 	p.read(&count)
 	b.Stacks = make([]Stack, count)
+	id := b.FirstID + 1
 	for i := int32(0); i < count; i++ {
 		p.read(&size)
-		b.Stacks[i] = o.Payload.Next(int(size))
+		b.Stacks[i] = Stack{
+			ID:   id + i,
+			Data: o.Payload.Next(int(size)),
+		}
 	}
 	return &b, p.error()
 }
