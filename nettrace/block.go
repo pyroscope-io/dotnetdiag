@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
-	"unicode/utf16"
 	"unsafe"
 )
 
@@ -23,7 +21,7 @@ type BlobBlock struct {
 	lastHeader    BlobHeader
 	extractHeader func(*Blob) error
 
-	p *parser
+	p *Parser
 }
 
 type BlobBlockHeader struct {
@@ -62,8 +60,7 @@ type BlobHeader struct {
 }
 
 type StackBlock struct {
-	FirstID int32
-	Stacks  []Stack
+	Stacks []Stack
 }
 
 type Stack struct {
@@ -106,9 +103,9 @@ func (b *BlobBlock) IsCompressed() bool { return b.compressed }
 func (b *Blob) IsSorted() bool { return b.sorted }
 
 func BlobBlockFromObject(o Object) (*BlobBlock, error) {
-	p := parser{Buffer: o.Payload}
+	p := Parser{Buffer: o.Payload}
 	var b BlobBlock
-	p.read(&b.Header)
+	p.Read(&b.Header)
 	b.compressed = b.Header.Flags&0x0001 != 0
 	if b.compressed {
 		b.extractHeader = b.readHeaderCompressed
@@ -122,7 +119,7 @@ func BlobBlockFromObject(o Object) (*BlobBlock, error) {
 	}
 	b.Payload = o.Payload
 	b.p = &p
-	return &b, p.error()
+	return &b, p.Err()
 }
 
 func (b *BlobBlock) Next(blob *Blob) error {
@@ -140,122 +137,94 @@ func (b *BlobBlock) Next(blob *Blob) error {
 }
 
 func (b *BlobBlock) readHeader(blob *Blob) error {
-	b.p.read(blob)
+	b.p.Read(blob)
 	// In the context of an EventBlock the low 31 bits are a foreign key to the
 	// event's metadata. In the context of a metadata block the low 31 bits are
 	// always zeroed. The high bit is the IsSorted flag.
 	blob.Header.MetadataID &= 0x7FFF
 	blob.sorted = uint32(blob.Header.MetadataID)&0x8000 == 0
-	return b.p.error()
+	return b.p.Err()
 }
 
 func (b *BlobBlock) readHeaderCompressed(blob *Blob) error {
 	blob.Header = b.lastHeader
 	var flags compressedHeaderFlag
-	b.p.read(&flags)
+	b.p.Read(&flags)
 	blob.sorted = flags&flagIsSorted != 0
 	if flags&flagMetadataID != 0 {
-		blob.Header.MetadataID = int32(b.p.uvarint())
+		blob.Header.MetadataID = int32(b.p.Uvarint())
 	}
 	if flags&flagCaptureThreadAndSequence != 0 {
-		blob.Header.SequenceNumber = int32(b.p.uvarint()) + 1
-		blob.Header.CaptureThreadID = long(b.p.uvarint())
-		blob.Header.CaptureProcNumber = int32(b.p.uvarint())
+		blob.Header.SequenceNumber = int32(b.p.Uvarint()) + 1
+		blob.Header.CaptureThreadID = long(b.p.Uvarint())
+		blob.Header.CaptureProcNumber = int32(b.p.Uvarint())
 	} else if blob.Header.MetadataID != 0 {
 		blob.Header.SequenceNumber++
 	}
 	if flags&flagThreadID != 0 {
-		blob.Header.ThreadID = long(b.p.uvarint())
+		blob.Header.ThreadID = long(b.p.Uvarint())
 	}
 	if flags&flagStackID != 0 {
-		blob.Header.StackID = int32(b.p.uvarint())
+		blob.Header.StackID = int32(b.p.Uvarint())
 	}
-	blob.Header.TimeStamp += long(b.p.uvarint())
+	blob.Header.TimeStamp += long(b.p.Uvarint())
 	if flags&flagActivityID != 0 {
-		b.p.read(&blob.Header.ActivityID)
+		b.p.Read(&blob.Header.ActivityID)
 	}
 	if flags&flagRelatedActivityID != 0 {
-		b.p.read(&blob.Header.RelatedActivityID)
+		b.p.Read(&blob.Header.RelatedActivityID)
 	}
 	if flags&flagPayloadSize != 0 {
-		blob.Header.PayloadSize = int32(b.p.uvarint())
+		blob.Header.PayloadSize = int32(b.p.Uvarint())
 	}
 	b.lastHeader = blob.Header
-	return b.p.error()
+	return b.p.Err()
 }
 
 func StackBlockFromObject(o Object) (*StackBlock, error) {
 	var b StackBlock
-	var count, size int32
-	p := parser{Buffer: o.Payload}
-	p.read(&b.FirstID)
-	p.read(&count)
+	var count, size, id int32
+	p := Parser{Buffer: o.Payload}
+	p.Read(&id)
+	p.Read(&count)
 	b.Stacks = make([]Stack, count)
-	id := b.FirstID + 1
 	for i := int32(0); i < count; i++ {
-		p.read(&size)
+		p.Read(&size)
 		b.Stacks[i] = Stack{
 			ID:   id + i,
 			Data: o.Payload.Next(int(size)),
 		}
 	}
-	return &b, p.error()
+	return &b, p.Err()
 }
 
 func SequencePointBlockFromObject(o Object) (*SequencePointBlock, error) {
 	var b SequencePointBlock
 	var count int32
-	p := parser{Buffer: o.Payload}
-	p.read(&b.TimeStamp)
-	p.read(&count)
+	p := Parser{Buffer: o.Payload}
+	p.Read(&b.TimeStamp)
+	p.Read(&count)
 	b.Threads = make([]Thread, count)
 	for i := int32(0); i < count; i++ {
 		var t Thread
-		p.read(&t)
+		p.Read(&t)
 		b.Threads[i] = t
 	}
-	return &b, p.error()
+	return &b, p.Err()
 }
 
-// TODO: refactor
-type parser struct {
-	*bytes.Buffer
-	errs []error
-}
-
-func (p *parser) error() error {
-	if len(p.errs) != 0 {
-		return fmt.Errorf("parser: %w", p.errs[0])
-	}
-	return nil
-}
-
-func (p *parser) read(v interface{}) {
-	if err := binary.Read(p, binary.LittleEndian, v); err != nil {
-		p.errs = append(p.errs, err)
-	}
-}
-
-func (p *parser) uvarint() uint64 {
-	n, err := binary.ReadUvarint(p)
-	if err != nil {
-		p.errs = append(p.errs, err)
+func (s Stack) InstructionPointers64() []uint64 {
+	n := make([]uint64, len(s.Data)/8)
+	for i := 0; i < len(n); i++ {
+		n[i] = binary.LittleEndian.Uint64(s.Data[i*8 : (i+1)*8])
 	}
 	return n
 }
 
-func (p *parser) utf16nts() string {
-	s := make([]uint16, 0, 64)
-	var c uint16
-	for {
-		if p.errs != nil {
-			return ""
-		}
-		p.read(&c)
-		if c == 0x0 {
-			break
-		}
-		s = append(s, c)
+func (s Stack) InstructionPointers32() []uint64 {
+	n := make([]uint64, len(s.Data)/4)
+	for i := 0; i < len(n); i++ {
+		n[i] = uint64(binary.LittleEndian.Uint32(s.Data[i*4 : (i+1)*4]))
 	}
-	return string(utf16.Decode(s))
+	return n
 }

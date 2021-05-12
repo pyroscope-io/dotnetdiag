@@ -12,7 +12,7 @@ var ErrNotImplemented = errors.New("not implemented")
 type Metadata struct {
 	Header  MetadataHeader
 	Payload MetadataPayload
-	p       *parser
+	p       *Parser
 }
 
 type MetadataHeader struct {
@@ -65,14 +65,14 @@ const (
 )
 
 func MetadataFromBlob(blob Blob) (*Metadata, error) {
-	md := Metadata{p: &parser{Buffer: blob.Payload}}
-	md.p.read(&md.Header.MetaDataID)
-	md.Header.ProviderName = md.p.utf16nts()
-	md.p.read(&md.Header.EventID)
-	md.Header.EventName = md.p.utf16nts()
-	md.p.read(&md.Header.Keywords)
-	md.p.read(&md.Header.Version)
-	md.p.read(&md.Header.Level)
+	md := Metadata{p: &Parser{Buffer: blob.Payload}}
+	md.p.Read(&md.Header.MetaDataID)
+	md.Header.ProviderName = md.p.UTF16NTS()
+	md.p.Read(&md.Header.EventID)
+	md.Header.EventName = md.p.UTF16NTS()
+	md.p.Read(&md.Header.Keywords)
+	md.p.Read(&md.Header.Version)
+	md.p.Read(&md.Header.Level)
 
 	if err := md.readPayload(&md.Payload); err != nil {
 		return nil, err
@@ -87,12 +87,12 @@ func MetadataFromBlob(blob Blob) (*Metadata, error) {
 		return nil, ErrNotImplemented
 	}
 
-	return &md, md.p.error()
+	return &md, md.p.Err()
 }
 
 func (md *Metadata) readPayload(mp *MetadataPayload) error {
 	var count int32
-	md.p.read(&count)
+	md.p.Read(&count)
 	for i := int32(0); i < count; i++ {
 		var f MetadataField
 		if err := md.readField(&f); err != nil {
@@ -100,11 +100,11 @@ func (md *Metadata) readPayload(mp *MetadataPayload) error {
 		}
 		mp.Fields = append(mp.Fields, f)
 	}
-	return md.p.error()
+	return md.p.Err()
 }
 
 func (md *Metadata) readField(f *MetadataField) error {
-	md.p.read(&f.TypeCode)
+	md.p.Read(&f.TypeCode)
 	switch f.TypeCode {
 	default:
 		// Built-in types do not have payload.
@@ -117,6 +117,6 @@ func (md *Metadata) readField(f *MetadataField) error {
 		}
 		f.Payload = p
 	}
-	f.Name = md.p.utf16nts()
-	return md.p.error()
+	f.Name = md.p.UTF16NTS()
+	return md.p.Err()
 }
