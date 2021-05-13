@@ -25,15 +25,6 @@ var (
 
 const Version int32 = 4
 
-// For convenience, Microsoft type names are used.
-// https://docs.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/built-in-types
-type (
-	short int16
-	long  int64
-	guid  [16]byte
-	// int int32
-)
-
 type Decoder struct{ r *netTraceReader }
 
 func NewDecoder(r io.Reader) *Decoder {
@@ -100,16 +91,16 @@ var objectHeaderTags = [3]Tag{
 }
 
 type Trace struct {
-	Year                    short
-	Month                   short
-	DayOfWeek               short
-	Day                     short
-	Hour                    short
-	Minute                  short
-	Second                  short
-	Millisecond             short
-	SyncTimeQPC             long
-	QPCFrequency            long
+	Year                    int16
+	Month                   int16
+	DayOfWeek               int16
+	Day                     int16
+	Hour                    int16
+	Minute                  int16
+	Second                  int16
+	Millisecond             int16
+	SyncTimeQPC             int64
+	QPCFrequency            int64
 	PointerSize             int32
 	ProcessID               int32
 	NumberOfProcessors      int32

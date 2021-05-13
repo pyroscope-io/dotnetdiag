@@ -1,9 +1,11 @@
 package nettrace_test
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"runtime/debug"
+	"strings"
 	"testing"
 
 	"github.com/pyroscope-io/dotnetdiag/nettrace"
@@ -19,7 +21,7 @@ func TestStream(t *testing.T) {
 	requireNoError(t, err)
 	t.Logf("Trace: %+v", trace)
 
-	s := sampler.NewSampler(trace)
+	s := sampler.NewCPUTimeSampler(trace)
 	stream.EventHandler = s.EventHandler
 	stream.MetadataHandler = s.MetadataHandler
 	stream.StackBlockHandler = s.StackBlockHandler
@@ -30,11 +32,15 @@ func TestStream(t *testing.T) {
 		switch err {
 		default:
 			requireNoError(t, err)
-		case io.EOF:
-			sampler.Print(os.Stdout, s)
-			return
 		case nil:
 			continue
+		case io.EOF:
+			s.WalkThread(4053210, func(frame sampler.FrameInfo) {
+				if frame.SampledTime > 0 {
+					fmt.Printf("%s(%s) %s\n", padding(frame.Level), frame.SampledTime, frame.Name)
+				}
+			})
+			return
 		}
 	}
 }
@@ -44,4 +50,12 @@ func requireNoError(t *testing.T, err error) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v\n%s\n", err, string(debug.Stack()))
 	}
+}
+
+func padding(x int) string {
+	var s strings.Builder
+	for i := 0; i < x; i++ {
+		s.WriteString("\t")
+	}
+	return s.String()
 }

@@ -26,12 +26,12 @@ type BlobBlock struct {
 
 type BlobBlockHeader struct {
 	// Size of the header including this field.
-	Size  short
-	Flags short
+	Size  int16
+	Flags int16
 	// MinTimestamp specifies the minimum timestamp of any event in this block.
-	MinTimestamp long
+	MinTimestamp int64
 	// MinTimestamp specifies the maximum timestamp of any event in this block.
-	MaxTimestamp long
+	MaxTimestamp int64
 	// Padding: optional reserved space to reach Size bytes.
 }
 
@@ -49,13 +49,13 @@ type BlobHeader struct {
 	_                 int32 // Unused: Size specifies record size not counting this field.
 	MetadataID        int32
 	SequenceNumber    int32
-	ThreadID          long
-	CaptureThreadID   long
+	ThreadID          int64
+	CaptureThreadID   int64
 	CaptureProcNumber int32
 	StackID           int32
-	TimeStamp         long
-	ActivityID        guid
-	RelatedActivityID guid
+	TimeStamp         int64
+	ActivityID        [16]byte
+	RelatedActivityID [16]byte
 	PayloadSize       int32
 }
 
@@ -69,12 +69,12 @@ type Stack struct {
 }
 
 type SequencePointBlock struct {
-	TimeStamp long
+	TimeStamp int64
 	Threads   []Thread
 }
 
 type Thread struct {
-	ThreadID       long
+	ThreadID       int64
 	SequenceNumber int32
 }
 
@@ -156,18 +156,18 @@ func (b *BlobBlock) readHeaderCompressed(blob *Blob) error {
 	}
 	if flags&flagCaptureThreadAndSequence != 0 {
 		blob.Header.SequenceNumber = int32(b.p.Uvarint()) + 1
-		blob.Header.CaptureThreadID = long(b.p.Uvarint())
+		blob.Header.CaptureThreadID = int64(b.p.Uvarint())
 		blob.Header.CaptureProcNumber = int32(b.p.Uvarint())
 	} else if blob.Header.MetadataID != 0 {
 		blob.Header.SequenceNumber++
 	}
 	if flags&flagThreadID != 0 {
-		blob.Header.ThreadID = long(b.p.Uvarint())
+		blob.Header.ThreadID = int64(b.p.Uvarint())
 	}
 	if flags&flagStackID != 0 {
 		blob.Header.StackID = int32(b.p.Uvarint())
 	}
-	blob.Header.TimeStamp += long(b.p.Uvarint())
+	blob.Header.TimeStamp += int64(b.p.Uvarint())
 	if flags&flagActivityID != 0 {
 		b.p.Read(&blob.Header.ActivityID)
 	}

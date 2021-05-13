@@ -20,7 +20,7 @@ type MetadataHeader struct {
 	ProviderName string
 	EventID      int32
 	EventName    string
-	Keywords     long
+	Keywords     int64
 	Version      MetadataVersion
 	Level        int32
 }

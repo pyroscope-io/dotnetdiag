@@ -10,12 +10,28 @@ import (
 	"github.com/pyroscope-io/dotnetdiag/nettrace"
 )
 
+// TODO: deferred parsing?
+
 type symbols struct {
-	addresses map[uint64]string
-	methods   methods
-	modules   map[int64]module
-	sorted    bool
+	// Instruction pointer -> MethodStartAddresses.
+	resolvedAddresses map[uint64]uint64
+	// MethodStartAddresses -> formatted string that includes
+	// module name, namespace, method name and signature.
+	strings map[uint64]string
+	// Slice of method addresses for sort and search.
+	methodAddresses []uint64
+	sorted          bool
+	// MethodStartAddress -> method.
+	methods map[uint64]*method
+	// ModuleID -> module.
+	modules map[int64]*module
 }
+
+type addresses []uint64
+
+func (x addresses) Len() int           { return len(x) }
+func (x addresses) Less(i, j int) bool { return x[i] < x[j] }
+func (x addresses) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }
 
 // method describes MethodLoadUnloadTraceData event payload for
 // Microsoft-Windows-DotNETRuntimeRundown Event ID 144.
@@ -52,39 +68,51 @@ func (d module) String() string {
 	return strings.TrimSuffix(filepath.Base(d.ModuleILPath), filepath.Ext(d.ModuleILPath))
 }
 
-type methods []method
-
-func (m methods) Len() int { return len(m) }
-
-func (m methods) Less(i, j int) bool { return m[i].MethodStartAddress < m[j].MethodStartAddress }
-
-func (m methods) Swap(i, j int) { m[i], m[j] = m[j], m[i] }
-
 func newSymbols() *symbols {
 	return &symbols{
-		addresses: make(map[uint64]string),
-		modules:   make(map[int64]module),
+		resolvedAddresses: make(map[uint64]uint64),
+		strings:           make(map[uint64]string),
+		methods:           make(map[uint64]*method),
+		modules:           make(map[int64]*module),
 	}
 }
 
-func (s *symbols) resolve(addr uint64) (string, bool) {
-	if name, ok := s.addresses[addr]; ok {
-		return name, true
+// resolveAddress resolves instruction pointer address to the method start address.
+func (s *symbols) resolveAddress(addr uint64) (uint64, bool) {
+	if resolved, ok := s.resolvedAddresses[addr]; ok {
+		return resolved, true
 	}
 	if !s.sorted {
-		sort.Sort(s.methods)
+		sort.Sort(addresses(s.methodAddresses))
 		s.sorted = true
 	}
-	methodIdx := sort.Search(len(s.methods), func(i int) bool {
-		return s.methods[i].MethodStartAddress > addr
+	methodIdx := sort.Search(len(s.methodAddresses), func(i int) bool {
+		return s.methodAddresses[i] > addr
 	})
-	// Method not found.
+	// Method address not found.
 	if methodIdx == len(s.methods) || methodIdx == 0 {
-		return "?!?", false
+		return 0, false
 	}
-	met := s.methods[methodIdx-1]
+	methodAddress := s.methodAddresses[methodIdx-1]
+	met, ok := s.methods[methodAddress]
+	if !ok {
+		return 0, false
+	}
 	// Ensure the instruction pointer is within the method address space.
 	if (met.MethodStartAddress + uint64(met.MethodSize)) <= addr {
+		return 0, false
+	}
+	s.resolvedAddresses[addr] = met.MethodStartAddress
+	return met.MethodStartAddress, true
+}
+
+// resolveString returns formatted string for the given method start address.
+func (s *symbols) resolveString(addr uint64) (string, bool) {
+	if name, ok := s.strings[addr]; ok {
+		return name, true
+	}
+	met, ok := s.methods[addr]
+	if !ok {
 		return "?!?", false
 	}
 	var name string
@@ -94,7 +122,7 @@ func (s *symbols) resolve(addr uint64) (string, bool) {
 	} else {
 		name = fmt.Sprintf("%s!%s", mod, met)
 	}
-	s.addresses[addr] = name
+	s.strings[addr] = name
 	return name, true
 }
 
@@ -103,7 +131,7 @@ func (s *symbols) addModule(e *nettrace.Blob) error {
 	if err != nil {
 		return err
 	}
-	s.modules[m.ModuleID] = m
+	s.modules[m.ModuleID] = &m
 	return nil
 }
 
@@ -112,7 +140,8 @@ func (s *symbols) addMethod(e *nettrace.Blob) error {
 	if err != nil {
 		return err
 	}
-	s.methods = append(s.methods, m)
+	s.methods[m.MethodStartAddress] = &m
+	s.methodAddresses = append(s.methodAddresses, m.MethodStartAddress)
 	s.sorted = false
 	return nil
 }
