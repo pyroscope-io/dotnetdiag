@@ -69,7 +69,7 @@ func (s *CPUTimeSampler) WalkThread(threadID int64, fn func(FrameInfo)) {
 			ThreadID:    threadID,
 			Addr:        addr,
 			Name:        name,
-			SampledTime: time.Duration(n.sampledTime) * time.Millisecond,
+			SampledTime: time.Duration(n.sampledTime),
 			Level:       i,
 		})
 	})
@@ -133,7 +133,7 @@ func (s *CPUTimeSampler) addSample(e *nettrace.Blob) error {
 		return err
 	}
 	// Relative time from the session start in milliseconds.
-	relativeTime := (e.Header.TimeStamp - s.trace.SyncTimeQPC) * 1000 / s.trace.QPCFrequency
+	relativeTime := e.Header.TimeStamp - s.trace.SyncTimeQPC
 	s.thread(e.Header.ThreadID).addSample(d.Type, relativeTime, s.stacks[e.Header.StackID])
 	return nil
 }

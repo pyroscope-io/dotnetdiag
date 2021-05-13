@@ -94,7 +94,7 @@ func (t *callStack) putSample(stack []uint64, baseTime, relativeTime int64) {
 			return
 		}
 	}
-	n := &frame{addr: x}
+	n := &frame{addr: x, sampledTime: relativeTime - baseTime}
 	if len(stack) > 1 {
 		n.callStack.putSample(stack[:i], baseTime, relativeTime)
 	}
