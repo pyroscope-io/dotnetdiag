@@ -2,6 +2,7 @@ package sampler
 
 import (
 	"bytes"
+	"container/heap"
 	"encoding/binary"
 	"fmt"
 	"time"
@@ -16,6 +17,8 @@ type CPUTimeSampler struct {
 	md      map[int32]*nettrace.Metadata
 	stacks  map[int32][]uint64
 	threads map[int64]*thread
+
+	samples samples
 }
 
 type FrameInfo struct {
@@ -24,6 +27,32 @@ type FrameInfo struct {
 	SampledTime time.Duration
 	Addr        uint64
 	Name        string
+}
+
+type sample struct {
+	typ          clrThreadSampleType
+	threadID     int64
+	stackID      int32
+	timestamp    int64
+	relativeTime int64
+}
+
+type samples []*sample
+
+func (s samples) Len() int { return len(s) }
+
+func (s samples) Less(i, j int) bool { return s[i].timestamp < s[j].timestamp }
+
+func (s samples) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+
+func (s *samples) Push(x interface{}) { *s = append(*s, x.(*sample)) }
+
+func (s *samples) Pop() interface{} {
+	old := *s
+	n := len(old)
+	x := old[n-1]
+	*s = old[0 : n-1]
+	return x
 }
 
 // clrThreadSampleTraceData describes ThreadSample event payload for
@@ -48,6 +77,7 @@ func NewCPUTimeSampler(trace *nettrace.Trace) *CPUTimeSampler {
 		sym:     newSymbols(),
 		md:      make(map[int32]*nettrace.Metadata),
 		threads: make(map[int64]*thread),
+		stacks:  make(map[int32][]uint64),
 	}
 }
 
@@ -67,7 +97,7 @@ func (s *CPUTimeSampler) WalkThread(threadID int64, fn func(FrameInfo)) {
 		name, _ := s.sym.resolveString(addr)
 		fn(FrameInfo{
 			ThreadID:    threadID,
-			Addr:        addr,
+			Addr:        n.addr,
 			Name:        name,
 			SampledTime: time.Duration(n.sampledTime),
 			Level:       i,
@@ -111,14 +141,15 @@ func (s *CPUTimeSampler) StackBlockHandler(sb *nettrace.StackBlock) error {
 }
 
 func (s *CPUTimeSampler) SequencePointBlockHandler(*nettrace.SequencePointBlock) error {
-	s.stacks = nil
+	for s.samples.Len() != 0 {
+		x := heap.Pop(&s.samples).(*sample)
+		s.thread(x.threadID).addSample(x.typ, x.relativeTime, s.stacks[x.stackID])
+	}
+	s.stacks = make(map[int32][]uint64)
 	return nil
 }
 
 func (s *CPUTimeSampler) addStack(x nettrace.Stack) {
-	if s.stacks == nil {
-		s.stacks = make(map[int32][]uint64)
-	}
 	if s.trace.PointerSize == 8 {
 		s.stacks[x.ID] = x.InstructionPointers64()
 		return
@@ -132,9 +163,13 @@ func (s *CPUTimeSampler) addSample(e *nettrace.Blob) error {
 	if err != nil {
 		return err
 	}
-	// Relative time from the session start in milliseconds.
-	relativeTime := e.Header.TimeStamp - s.trace.SyncTimeQPC
-	s.thread(e.Header.ThreadID).addSample(d.Type, relativeTime, s.stacks[e.Header.StackID])
+	heap.Push(&s.samples, &sample{
+		typ:          d.Type,
+		threadID:     e.Header.ThreadID,
+		stackID:      e.Header.StackID,
+		timestamp:    e.Header.TimeStamp,
+		relativeTime: e.Header.TimeStamp - s.trace.SyncTimeQPC,
+	})
 	return nil
 }
 
@@ -149,7 +184,7 @@ func (s *CPUTimeSampler) thread(tid int64) *thread {
 	if ok {
 		return t
 	}
-	t = &thread{callStack: new(callStack)}
+	t = &thread{callTree: new(callTree)}
 	s.threads[tid] = t
 	return t
 }

@@ -4,7 +4,7 @@ type thread struct {
 	threadState
 	lastBlockTime int64
 	lastCPUTime   int64
-	*callStack
+	*callTree
 }
 
 type threadState int
@@ -59,27 +59,27 @@ func (t *thread) addSample(sampleType clrThreadSampleType, relativeTime int64, s
 
 func (t *thread) putCPUSample(stack []uint64, rt int64) {
 	if t.lastCPUTime > 0 {
-		t.putSample(stack, t.lastCPUTime, rt)
+		t.put(stack, t.lastCPUTime, rt)
 	}
 }
 
 func (t *thread) putBlockSample(stack []uint64, rt int64) {
 	if t.lastBlockTime > 0 {
-		t.putSample(stack, t.lastBlockTime, rt)
+		t.put(stack, t.lastBlockTime, rt)
 	}
 }
 
-type callStack struct {
+type callTree struct {
 	frames []*frame
 }
 
 type frame struct {
 	addr        uint64
 	sampledTime int64
-	callStack
+	callTree
 }
 
-func (t *callStack) putSample(stack []uint64, baseTime, relativeTime int64) {
+func (t *callTree) put(stack []uint64, baseTime, relativeTime int64) {
 	if len(stack) == 0 {
 		return
 	}
@@ -89,26 +89,26 @@ func (t *callStack) putSample(stack []uint64, baseTime, relativeTime int64) {
 		if f.addr == x {
 			f.sampledTime += relativeTime - baseTime
 			if len(stack) > 1 {
-				f.callStack.putSample(stack[:i], baseTime, relativeTime)
+				f.callTree.put(stack[:i], baseTime, relativeTime)
 			}
 			return
 		}
 	}
 	n := &frame{addr: x, sampledTime: relativeTime - baseTime}
 	if len(stack) > 1 {
-		n.callStack.putSample(stack[:i], baseTime, relativeTime)
+		n.callTree.put(stack[:i], baseTime, relativeTime)
 	}
 	t.frames = append(t.frames, n)
 }
 
-func (t *callStack) walk(f func(int, *frame)) {
+func (t *callTree) walk(f func(int, *frame)) {
 	for i, n := range t.frames {
 		if i > 0 {
 			f(i-1, n)
 		} else {
 			f(i, n)
 		}
-		n.callStack.walk(func(i int, n *frame) {
+		n.callTree.walk(func(i int, n *frame) {
 			f(i+1, n)
 		})
 	}

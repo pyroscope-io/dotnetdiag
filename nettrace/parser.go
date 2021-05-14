@@ -34,7 +34,7 @@ func (p *Parser) Uvarint() uint64 {
 }
 
 func (p *Parser) UTF16NTS() string {
-	s := make([]uint16, 0, 64)
+	s := make([]uint16, 0, 256)
 	var c uint16
 	for {
 		if p.errs != nil {
