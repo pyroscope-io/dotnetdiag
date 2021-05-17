@@ -116,6 +116,5 @@ func (s *Session) Read(b []byte) (int, error) {
 }
 
 func (s *Session) Close() error {
-	// TODO: close session conn?
 	return s.c.StopTracing(s.ID)
 }

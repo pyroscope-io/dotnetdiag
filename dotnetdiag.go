@@ -19,16 +19,6 @@ var (
 // DOTNET_IPC_V1 magic header.
 var magic = [...]byte{0x44, 0x4F, 0x54, 0x4E, 0x45, 0x54, 0x5f, 0x49, 0x50, 0x43, 0x5F, 0x56, 0x31, 0x00}
 
-// Header ...
-// size = 14 + 2 + 1 + 1 + 2 = 20 bytes
-// struct IpcHeader
-// {
-// 	uint8_t[14]  magic = "DOTNET_IPC_V1";
-// 	uint16_t     size;        // size of packet = size of header + payload
-// 	uint8_t      command_set; // combined with command_id is the Command to invoke
-// 	uint8_t      command_id;  // combined with command_set is the Command to invoke
-// 	uint16_t     reserved;    // for potential future use
-// };
 type Header struct {
 	Magic      [14]uint8
 	Size       uint16
@@ -39,18 +29,6 @@ type Header struct {
 
 const headerSize = 20
 
-// CommandSet ...
-// enum class CommandSet : uint8_t
-// {
-//   // reserved = 0x00,
-//   Dump        = 0x01,
-//   EventPipe   = 0x02,
-//   Profiler    = 0x03,
-//   Process     = 0x04,
-//   // future
-//
-//   Server = 0xFF,
-// };
 const (
 	_ = iota
 	CommandSetDump
@@ -61,13 +39,6 @@ const (
 	CommandSetServer = 0xFF
 )
 
-// enum class EventPipeCommandId : uint8_t
-// {
-//   // reserved = 0x00,
-//   StopTracing     = 0x01, // stop a given session
-//   CollectTracing  = 0x02, // create/start a given session
-//   CollectTracing2 = 0x03, // create/start a given session with/without rundown
-// }
 const (
 	_ = iota
 	EventPipeStopTracing
