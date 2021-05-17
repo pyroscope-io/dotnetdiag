@@ -1,12 +1,14 @@
 # .Net diagnostics
 
-*Work In Progress*
-
 The package provides means for .Net runtime diagnostics implemented in Golang:
  - [Diagnostics IPC Protocol](https://github.com/dotnet/diagnostics/blob/main/documentation/design-docs/ipc-protocol.md#transport) client.
  - [NetTrace](https://github.com/microsoft/perfview/blob/main/src/TraceEvent/EventPipe/EventPipeFormat.md) decoder.
 
-### Diagnostics IPC Protocol Client
+### Diagnostic IPC Client
+
+```
+# go get github.com/pyroscope-io/dotnetdiag
+```
 
 Supported .Net versions:
  - .Net 5.0
@@ -26,4 +28,17 @@ Implemented commands:
  - [ ] ProcessInfo
  - [ ] ResumeRuntime
 
-See [examples](examples) directory. 
+### NetTrace decoder
+
+```
+# go get github.com/pyroscope-io/dotnetdiag/nettrace
+```
+
+Supported format versions: <= 4
+
+The decoder deserializes `NetTrace` binary stream to the object sequence. The package also provides an example stream
+handler implementation which processes **Microsoft-DotNETCore-SampleProfiler**
+events: [github.com/pyroscope-io/dotnetdiag/nettrace/profiler](github.com/pyroscope-io/dotnetdiag/nettrace/profiler).
+
+See [examples](examples) directory.
+

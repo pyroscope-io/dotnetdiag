@@ -2,35 +2,30 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 
 	"github.com/pyroscope-io/dotnetdiag"
+	"github.com/pyroscope-io/dotnetdiag/nettrace"
+	"github.com/pyroscope-io/dotnetdiag/nettrace/profiler"
 )
 
 func main() {
-	var (
-		socketFilePath string
-		outputFilePath = "my-traces.nettrace"
-	)
-
-	flag.StringVar(&socketFilePath, "s", "", "Path to Diagnostic IPC socket")
-	flag.StringVar(&outputFilePath, "o", "my-traces.nettrace", "Output file.")
+	var ps string
+	flag.StringVar(&ps, "p", "", "Target process ID")
 	flag.Parse()
 
-	if socketFilePath == "" {
-		log.Fatalln("Diagnostic IPC socket path is required.")
-	}
-
-	file, err := os.Create(outputFilePath)
+	pid, err := strconv.Atoi(ps)
 	if err != nil {
-		log.Fatalln(err)
+		log.Fatalln("Invalid PID:", err)
 	}
-	defer file.Close()
 
-	c := dotnetdiag.NewClient(socketFilePath)
+	c := dotnetdiag.NewClient(dotnetdiag.DefaultServerAddress(pid))
 	ctc := dotnetdiag.CollectTracingConfig{
 		CircularBufferSizeMB: 10,
 		Providers: []dotnetdiag.ProviderConfig{
@@ -57,9 +52,45 @@ func main() {
 		}
 	}()
 
-	if _, err = io.Copy(file, sess); err != nil {
+	// Process the stream with the sample profiler.
+	stream := nettrace.NewStream(sess)
+	trace, err := stream.Open()
+	if err != nil {
+		_ = sess.Close()
 		log.Fatalln(err)
 	}
 
-	log.Println("Done")
+	p := profiler.NewSampleProfiler(trace)
+	stream.EventHandler = p.EventHandler
+	stream.MetadataHandler = p.MetadataHandler
+	stream.StackBlockHandler = p.StackBlockHandler
+	stream.SequencePointBlockHandler = p.SequencePointBlockHandler
+
+	log.Println("Collecting trace log")
+	for {
+		switch err = stream.Next(); err {
+		default:
+			log.Fatalln(err)
+		case nil:
+			continue
+		case io.EOF:
+			p.Walk(treePrinter(os.Stdout))
+			log.Println("Done")
+			return
+		}
+	}
+}
+
+func treePrinter(w io.Writer) func(profiler.FrameInfo) {
+	return func(frame profiler.FrameInfo) {
+		_, _ = fmt.Fprintf(w, "%s(%v) %s\n", padding(frame.Level), frame.SampledTime, frame.Name)
+	}
+}
+
+func padding(x int) string {
+	var s strings.Builder
+	for i := 0; i < x; i++ {
+		s.WriteString("\t")
+	}
+	return s.String()
 }
