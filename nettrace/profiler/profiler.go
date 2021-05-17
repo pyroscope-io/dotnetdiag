@@ -1,7 +1,6 @@
-package sampler
+package profiler
 
 import (
-	"bytes"
 	"container/heap"
 	"encoding/binary"
 	"fmt"
@@ -10,7 +9,7 @@ import (
 	"github.com/pyroscope-io/dotnetdiag/nettrace"
 )
 
-type CPUTimeSampler struct {
+type SampleProfiler struct {
 	trace *nettrace.Trace
 	sym   *symbols
 
@@ -71,8 +70,8 @@ const (
 	sampleTypeManaged
 )
 
-func NewCPUTimeSampler(trace *nettrace.Trace) *CPUTimeSampler {
-	return &CPUTimeSampler{
+func NewSampleProfiler(trace *nettrace.Trace) *SampleProfiler {
+	return &SampleProfiler{
 		trace:   trace,
 		sym:     newSymbols(),
 		md:      make(map[int32]*nettrace.Metadata),
@@ -81,13 +80,13 @@ func NewCPUTimeSampler(trace *nettrace.Trace) *CPUTimeSampler {
 	}
 }
 
-func (s *CPUTimeSampler) Walk(fn func(FrameInfo)) {
+func (s *SampleProfiler) Walk(fn func(FrameInfo)) {
 	for tid := range s.threads {
 		s.WalkThread(tid, fn)
 	}
 }
 
-func (s *CPUTimeSampler) WalkThread(threadID int64, fn func(FrameInfo)) {
+func (s *SampleProfiler) WalkThread(threadID int64, fn func(FrameInfo)) {
 	t, ok := s.threads[threadID]
 	if !ok {
 		return
@@ -105,7 +104,7 @@ func (s *CPUTimeSampler) WalkThread(threadID int64, fn func(FrameInfo)) {
 	})
 }
 
-func (s *CPUTimeSampler) EventHandler(e *nettrace.Blob) error {
+func (s *SampleProfiler) EventHandler(e *nettrace.Blob) error {
 	md, ok := s.md[e.Header.MetadataID]
 	if !ok {
 		return fmt.Errorf("metadata not found")
@@ -128,19 +127,19 @@ func (s *CPUTimeSampler) EventHandler(e *nettrace.Blob) error {
 	return nil
 }
 
-func (s *CPUTimeSampler) MetadataHandler(md *nettrace.Metadata) error {
+func (s *SampleProfiler) MetadataHandler(md *nettrace.Metadata) error {
 	s.md[md.Header.MetaDataID] = md
 	return nil
 }
 
-func (s *CPUTimeSampler) StackBlockHandler(sb *nettrace.StackBlock) error {
+func (s *SampleProfiler) StackBlockHandler(sb *nettrace.StackBlock) error {
 	for _, stack := range sb.Stacks {
 		s.addStack(stack)
 	}
 	return nil
 }
 
-func (s *CPUTimeSampler) SequencePointBlockHandler(*nettrace.SequencePointBlock) error {
+func (s *SampleProfiler) SequencePointBlockHandler(*nettrace.SequencePointBlock) error {
 	for s.samples.Len() != 0 {
 		x := heap.Pop(&s.samples).(*sample)
 		s.thread(x.threadID).addSample(x.typ, x.relativeTime, s.stacks[x.stackID])
@@ -149,7 +148,7 @@ func (s *CPUTimeSampler) SequencePointBlockHandler(*nettrace.SequencePointBlock)
 	return nil
 }
 
-func (s *CPUTimeSampler) addStack(x nettrace.Stack) {
+func (s *SampleProfiler) addStack(x nettrace.Stack) {
 	if s.trace.PointerSize == 8 {
 		s.stacks[x.ID] = x.InstructionPointers64()
 		return
@@ -158,9 +157,9 @@ func (s *CPUTimeSampler) addStack(x nettrace.Stack) {
 	return
 }
 
-func (s *CPUTimeSampler) addSample(e *nettrace.Blob) error {
-	d, err := parseClrThreadSampleTraceData(e.Payload)
-	if err != nil {
+func (s *SampleProfiler) addSample(e *nettrace.Blob) error {
+	var d clrThreadSampleTraceData
+	if err := binary.Read(e.Payload, binary.LittleEndian, &d); err != nil {
 		return err
 	}
 	heap.Push(&s.samples, &sample{
@@ -173,18 +172,12 @@ func (s *CPUTimeSampler) addSample(e *nettrace.Blob) error {
 	return nil
 }
 
-func parseClrThreadSampleTraceData(b *bytes.Buffer) (clrThreadSampleTraceData, error) {
-	var d clrThreadSampleTraceData
-	err := binary.Read(b, binary.LittleEndian, &d)
-	return d, err
-}
-
-func (s *CPUTimeSampler) thread(tid int64) *thread {
+func (s *SampleProfiler) thread(tid int64) *thread {
 	t, ok := s.threads[tid]
 	if ok {
 		return t
 	}
-	t = &thread{callTree: new(callTree)}
+	t = new(thread)
 	s.threads[tid] = t
 	return t
 }

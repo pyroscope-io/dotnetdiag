@@ -35,7 +35,7 @@ type BlobBlockHeader struct {
 	// Padding: optional reserved space to reach Size bytes.
 }
 
-const eventBlockHeaderLength = int32(unsafe.Sizeof(BlobBlockHeader{}))
+const blockHeaderSize = int32(unsafe.Sizeof(BlobBlockHeader{}))
 
 type Blob struct {
 	Header BlobHeader
@@ -113,10 +113,7 @@ func BlobBlockFromObject(o Object) (*BlobBlock, error) {
 		b.extractHeader = b.readHeader
 	}
 	// Skip header padding.
-	padLen := int32(b.Header.Size) - eventBlockHeaderLength
-	if padLen > 0 {
-		o.Payload.Next(int(padLen))
-	}
+	p.Skip(int(b.Header.Size) - int(blockHeaderSize))
 	b.Payload = o.Payload
 	b.p = &p
 	return &b, p.Err()

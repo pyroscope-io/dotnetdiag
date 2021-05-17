@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/pyroscope-io/dotnetdiag/nettrace"
-	"github.com/pyroscope-io/dotnetdiag/nettrace/sampler"
+	"github.com/pyroscope-io/dotnetdiag/nettrace/profiler"
 )
 
 func TestStream(t *testing.T) {
@@ -25,11 +25,11 @@ func TestStream(t *testing.T) {
 	trace, err := stream.Open()
 	requireNoError(t, err)
 
-	s := sampler.NewCPUTimeSampler(trace)
-	stream.EventHandler = s.EventHandler
-	stream.MetadataHandler = s.MetadataHandler
-	stream.StackBlockHandler = s.StackBlockHandler
-	stream.SequencePointBlockHandler = s.SequencePointBlockHandler
+	p := profiler.NewSampleProfiler(trace)
+	stream.EventHandler = p.EventHandler
+	stream.MetadataHandler = p.MetadataHandler
+	stream.StackBlockHandler = p.StackBlockHandler
+	stream.SequencePointBlockHandler = p.SequencePointBlockHandler
 
 	for {
 		err = stream.Next()
@@ -40,7 +40,7 @@ func TestStream(t *testing.T) {
 			continue
 		case io.EOF:
 			r := newRenderer()
-			s.Walk(r.visitor)
+			p.Walk(r.visitor)
 			var b bytes.Buffer
 			r.dumpFlat(&b)
 			if b.String() != string(expected) {
@@ -69,7 +69,7 @@ func newRenderer() *renderer {
 	return &renderer{out: make(map[string]time.Duration)}
 }
 
-func (r *renderer) visitor(frame sampler.FrameInfo) {
+func (r *renderer) visitor(frame profiler.FrameInfo) {
 	if frame.Level > r.prev || (frame.Level == 0 && r.prev == 0) {
 		r.names = append(r.names, frame.Name)
 	} else {
@@ -102,8 +102,8 @@ func (r *renderer) dumpFlat(w io.Writer) {
 	}
 }
 
-func (r *renderer) dumpTree(w io.Writer) func(sampler.FrameInfo) {
-	return func(frame sampler.FrameInfo) {
+func (r *renderer) dumpTree(w io.Writer) func(profiler.FrameInfo) {
+	return func(frame profiler.FrameInfo) {
 		_, _ = fmt.Fprintf(w, "%s(%v) %s\n", padding(frame.Level), frame.SampledTime, frame.Name)
 	}
 }

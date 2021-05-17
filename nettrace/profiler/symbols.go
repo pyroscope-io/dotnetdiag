@@ -1,4 +1,4 @@
-package sampler
+package profiler
 
 import (
 	"bytes"
@@ -10,14 +10,12 @@ import (
 	"github.com/pyroscope-io/dotnetdiag/nettrace"
 )
 
-// TODO: deferred parsing?
-
 type symbols struct {
 	// Instruction pointer -> MethodStartAddresses.
 	resolvedAddresses map[uint64]uint64
 	// MethodStartAddresses -> formatted string that includes
 	// module name, namespace, method name and signature.
-	strings map[uint64]string
+	resolvedStrings map[uint64]string
 	// Slice of method addresses for sort and search.
 	methodAddresses []uint64
 	sorted          bool
@@ -29,9 +27,11 @@ type symbols struct {
 
 type addresses []uint64
 
-func (x addresses) Len() int           { return len(x) }
+func (x addresses) Len() int { return len(x) }
+
 func (x addresses) Less(i, j int) bool { return x[i] < x[j] }
-func (x addresses) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }
+
+func (x addresses) Swap(i, j int) { x[i], x[j] = x[j], x[i] }
 
 // method describes MethodLoadUnloadTraceData event payload for
 // Microsoft-Windows-DotNETRuntimeRundown Event ID 144.
@@ -71,7 +71,7 @@ func (d module) String() string {
 func newSymbols() *symbols {
 	return &symbols{
 		resolvedAddresses: make(map[uint64]uint64),
-		strings:           make(map[uint64]string),
+		resolvedStrings:   make(map[uint64]string),
 		methods:           make(map[uint64]*method),
 		modules:           make(map[int64]*module),
 	}
@@ -108,7 +108,7 @@ func (s *symbols) resolveAddress(addr uint64) (uint64, bool) {
 
 // resolveString returns formatted string for the given method start address.
 func (s *symbols) resolveString(addr uint64) (string, bool) {
-	if name, ok := s.strings[addr]; ok {
+	if name, ok := s.resolvedStrings[addr]; ok {
 		return name, true
 	}
 	met, ok := s.methods[addr]
@@ -122,7 +122,7 @@ func (s *symbols) resolveString(addr uint64) (string, bool) {
 	} else {
 		name = fmt.Sprintf("%s!%s", mod, met)
 	}
-	s.strings[addr] = name
+	s.resolvedStrings[addr] = name
 	return name, true
 }
 
@@ -167,7 +167,7 @@ func parseModule(b *bytes.Buffer) (module, error) {
 	p.Read(&d.ModuleID)
 	p.Read(&d.AssemblyID)
 	p.Read(&d.ModuleFlags)
-	_ = p.Next(12)
+	p.Skip(12)
 	d.ModuleILPath = p.UTF16NTS()
 	return d, p.Err()
 }

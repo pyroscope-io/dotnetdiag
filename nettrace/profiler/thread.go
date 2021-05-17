@@ -1,10 +1,9 @@
-package sampler
+package profiler
 
 type thread struct {
-	threadState
 	lastBlockTime int64
 	lastCPUTime   int64
-	*callTree
+	callTree
 }
 
 type threadState int
@@ -69,9 +68,7 @@ func (t *thread) putBlockSample(stack []uint64, rt int64) {
 	}
 }
 
-type callTree struct {
-	frames []*frame
-}
+type callTree []*frame
 
 type frame struct {
 	addr        uint64
@@ -85,31 +82,32 @@ func (t *callTree) put(stack []uint64, baseTime, relativeTime int64) {
 	}
 	i := len(stack) - 1
 	x := stack[i]
-	for _, f := range t.frames {
-		if f.addr == x {
-			f.sampledTime += relativeTime - baseTime
-			if len(stack) > 1 {
-				f.callTree.put(stack[:i], baseTime, relativeTime)
-			}
-			return
+	for _, f := range *t {
+		if f.addr != x {
+			continue
 		}
+		f.sampledTime += relativeTime - baseTime
+		if len(stack) > 1 {
+			f.put(stack[:i], baseTime, relativeTime)
+		}
+		return
 	}
-	n := &frame{addr: x, sampledTime: relativeTime - baseTime}
+	f := &frame{addr: x, sampledTime: relativeTime - baseTime}
 	if len(stack) > 1 {
-		n.callTree.put(stack[:i], baseTime, relativeTime)
+		f.put(stack[:i], baseTime, relativeTime)
 	}
-	t.frames = append(t.frames, n)
+	*t = append(*t, f)
 }
 
-func (t *callTree) walk(f func(int, *frame)) {
-	for i, n := range t.frames {
+func (t *callTree) walk(fn func(int, *frame)) {
+	for i, f := range *t {
 		if i > 0 {
-			f(i-1, n)
+			fn(i-1, f)
 		} else {
-			f(i, n)
+			fn(i, f)
 		}
-		n.callTree.walk(func(i int, n *frame) {
-			f(i+1, n)
+		f.walk(func(i int, n *frame) {
+			fn(i+1, n)
 		})
 	}
 }

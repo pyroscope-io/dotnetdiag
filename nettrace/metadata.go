@@ -2,7 +2,6 @@ package nettrace
 
 import (
 	"errors"
-	"io"
 
 	"github.com/pyroscope-io/dotnetdiag/nettrace/typecode"
 )
@@ -37,7 +36,6 @@ const (
 
 type MetadataPayload struct {
 	Fields []MetadataField
-	Tags   []MetadataTag // V5 and later only.
 }
 
 type MetadataField struct {
@@ -50,19 +48,6 @@ type MetadataField struct {
 	Payload MetadataPayload
 	Name    string
 }
-
-type MetadataTag struct {
-	Kind   MetadataTagKind
-	OpCode byte
-}
-
-type MetadataTagKind byte
-
-const (
-	_ MetadataTagKind = iota
-	TagKindOpCode
-	TagKindV2Params
-)
 
 func MetadataFromBlob(blob Blob) (*Metadata, error) {
 	md := Metadata{p: &Parser{Buffer: blob.Payload}}
@@ -83,9 +68,9 @@ func MetadataFromBlob(blob Blob) (*Metadata, error) {
 	// specifies a TagKindV2Params tag, the event must have an empty V1
 	// parameter FieldCount and no field definitions. Version 5 is not
 	// supported yet, therefore we expect the buffer is read to the end.
-	if _, err := md.p.ReadByte(); err != io.EOF {
-		return nil, ErrNotImplemented
-	}
+	// 	if _, err := md.p.ReadByte(); err != io.EOF {
+	// 		return nil, ErrNotImplemented
+	// 	}
 
 	return &md, md.p.Err()
 }
