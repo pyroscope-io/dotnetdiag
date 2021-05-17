@@ -36,9 +36,5 @@ Implemented commands:
 
 Supported format versions: <= 4
 
-The decoder deserializes `NetTrace` binary stream to the object sequence. The package also provides an example stream
-handler implementation which processes **Microsoft-DotNETCore-SampleProfiler**
-events: [github.com/pyroscope-io/dotnetdiag/nettrace/profiler](github.com/pyroscope-io/dotnetdiag/nettrace/profiler).
-
-See [examples](examples) directory.
-
+The decoder deserializes `NetTrace` binary stream to the object sequence. The package contains an example stream
+handler implementation that processes events from **Microsoft-DotNETCore-SampleProfiler** provider. See [examples](examples) directory.
