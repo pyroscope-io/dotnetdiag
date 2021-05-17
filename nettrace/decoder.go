@@ -28,18 +28,26 @@ const Version int32 = 4
 type Decoder struct{ r *netTraceReader }
 
 func NewDecoder(r io.Reader) *Decoder {
-	return &Decoder{r: &netTraceReader{inner: r}}
+	return &Decoder{
+		r: &netTraceReader{
+			buf:   bytes.NewBuffer(make([]byte, 0, 4<<10)),
+			inner: r,
+		},
+	}
 }
 
 type netTraceReader struct {
 	offset uint64
 	inner  io.Reader
+	buf    *bytes.Buffer
 }
 
 func (c *netTraceReader) Read(b []byte) (int, error) {
-	n, err := c.inner.Read(b)
+	n, err := io.CopyN(c.buf, c.inner, int64(len(b)))
+	copy(b, c.buf.Bytes()[:n])
+	c.buf.Reset()
 	c.offset += uint64(n)
-	return n, err
+	return int(n), err
 }
 
 type Object struct {
