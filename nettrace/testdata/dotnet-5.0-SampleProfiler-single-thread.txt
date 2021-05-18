@@ -1,0 +1,4 @@
+mvc-hello-world!Example.Program.Main(class System.String[]);mvc-hello-world!Example.Program.Fast() 11217349
+mvc-hello-world!Example.Program.Main(class System.String[]);mvc-hello-world!Example.Program.Fast();mvc-hello-world!Example.Program.Work(int32) 1639660012
+mvc-hello-world!Example.Program.Main(class System.String[]);mvc-hello-world!Example.Program.Slow() 11253402
+mvc-hello-world!Example.Program.Main(class System.String[]);mvc-hello-world!Example.Program.Slow();mvc-hello-world!Example.Program.Work(int32) 6511759978

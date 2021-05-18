@@ -2,13 +2,11 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 
 	"github.com/pyroscope-io/dotnetdiag"
 	"github.com/pyroscope-io/dotnetdiag/nettrace"
@@ -74,23 +72,10 @@ func main() {
 		case nil:
 			continue
 		case io.EOF:
-			p.Walk(treePrinter(os.Stdout))
-			log.Println("Done")
+			for name, time := range p.Samples() {
+				log.Println(name, time)
+			}
 			return
 		}
 	}
-}
-
-func treePrinter(w io.Writer) func(profiler.FrameInfo) {
-	return func(frame profiler.FrameInfo) {
-		_, _ = fmt.Fprintf(w, "%s(%v) %s\n", padding(frame.Level), frame.SampledTime, frame.Name)
-	}
-}
-
-func padding(x int) string {
-	var s strings.Builder
-	for i := 0; i < x; i++ {
-		s.WriteString("\t")
-	}
-	return s.String()
 }

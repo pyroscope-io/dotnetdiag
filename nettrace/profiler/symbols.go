@@ -11,11 +11,9 @@ import (
 )
 
 type symbols struct {
-	// Instruction pointer -> MethodStartAddresses.
-	resolvedAddresses map[uint64]uint64
-	// MethodStartAddresses -> formatted string that includes
+	// Instruction pointer -> formatted string that includes
 	// module name, namespace, method name and signature.
-	resolvedStrings map[uint64]string
+	resolved map[uint64]string
 	// Slice of method addresses for sort and search.
 	methodAddresses []uint64
 	sorted          bool
@@ -70,17 +68,17 @@ func (d module) String() string {
 
 func newSymbols() *symbols {
 	return &symbols{
-		resolvedAddresses: make(map[uint64]uint64),
-		resolvedStrings:   make(map[uint64]string),
-		methods:           make(map[uint64]*method),
-		modules:           make(map[int64]*module),
+		resolved: make(map[uint64]string),
+		methods:  make(map[uint64]*method),
+		modules:  make(map[int64]*module),
 	}
 }
 
-// resolveAddress resolves instruction pointer address to the method start address.
-func (s *symbols) resolveAddress(addr uint64) (uint64, bool) {
-	if resolved, ok := s.resolvedAddresses[addr]; ok {
-		return resolved, true
+const unresolvedSymbol = "?!?"
+
+func (s *symbols) resolve(addr uint64) string {
+	if n, ok := s.resolved[addr]; ok {
+		return n
 	}
 	if !s.sorted {
 		sort.Sort(addresses(s.methodAddresses))
@@ -90,30 +88,17 @@ func (s *symbols) resolveAddress(addr uint64) (uint64, bool) {
 		return s.methodAddresses[i] > addr
 	})
 	// Method address not found.
-	if methodIdx == len(s.methods) || methodIdx == 0 {
-		return 0, false
+	if methodIdx-1 == len(s.methods) || methodIdx == 0 {
+		return unresolvedSymbol
 	}
 	methodAddress := s.methodAddresses[methodIdx-1]
 	met, ok := s.methods[methodAddress]
 	if !ok {
-		return 0, false
+		return unresolvedSymbol
 	}
 	// Ensure the instruction pointer is within the method address space.
 	if (met.MethodStartAddress + uint64(met.MethodSize)) <= addr {
-		return 0, false
-	}
-	s.resolvedAddresses[addr] = met.MethodStartAddress
-	return met.MethodStartAddress, true
-}
-
-// resolveString returns formatted string for the given method start address.
-func (s *symbols) resolveString(addr uint64) (string, bool) {
-	if name, ok := s.resolvedStrings[addr]; ok {
-		return name, true
-	}
-	met, ok := s.methods[addr]
-	if !ok {
-		return "?!?", false
+		return unresolvedSymbol
 	}
 	var name string
 	mod, ok := s.modules[met.ModuleID]
@@ -122,8 +107,8 @@ func (s *symbols) resolveString(addr uint64) (string, bool) {
 	} else {
 		name = fmt.Sprintf("%s!%s", mod, met)
 	}
-	s.resolvedStrings[addr] = name
-	return name, true
+	s.resolved[addr] = name
+	return name
 }
 
 func (s *symbols) addModule(e *nettrace.Blob) error {

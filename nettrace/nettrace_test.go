@@ -7,7 +7,6 @@ import (
 	"os"
 	"runtime/debug"
 	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,13 +14,29 @@ import (
 	"github.com/pyroscope-io/dotnetdiag/nettrace/profiler"
 )
 
-func TestStream(t *testing.T) {
-	sample, err := os.Open("testdata/golden.nettrace")
+func TestNetTraceDecoding(t *testing.T) {
+	t.Run(".Net 5.0 SampleProfiler Web app", func(t *testing.T) {
+		requireEqual(t,
+			"testdata/dotnet-5.0-SampleProfiler-webapp.golden.nettrace",
+			"testdata/dotnet-5.0-SampleProfiler-webapp.txt")
+	})
+
+	t.Run(".Net 5.0 SampleProfiler Simple single thread app", func(t *testing.T) {
+		requireEqual(t,
+			"testdata/dotnet-5.0-SampleProfiler-single-thread.golden.nettrace",
+			"testdata/dotnet-5.0-SampleProfiler-single-thread.txt")
+	})
+}
+
+func requireEqual(t *testing.T, sample, expected string) {
+	t.Helper()
+
+	s, err := os.Open(sample)
 	requireNoError(t, err)
-	expected, err := os.ReadFile("testdata/expected.nettrace")
+	e, err := os.ReadFile(expected)
 	requireNoError(t, err)
 
-	stream := nettrace.NewStream(sample)
+	stream := nettrace.NewStream(s)
 	trace, err := stream.Open()
 	requireNoError(t, err)
 
@@ -39,12 +54,10 @@ func TestStream(t *testing.T) {
 		case nil:
 			continue
 		case io.EOF:
-			r := newRenderer()
-			p.Walk(r.visitor)
 			var b bytes.Buffer
-			r.dumpFlat(&b)
-			if b.String() != string(expected) {
-				t.Fatalf("Unexpected output")
+			dump(&b, p.Samples())
+			if b.String() != string(e) {
+				t.Fatal("output mismatch")
 			}
 			return
 		}
@@ -58,60 +71,13 @@ func requireNoError(t *testing.T, err error) {
 	}
 }
 
-type renderer struct {
-	out   map[string]time.Duration
-	names []string
-	val   time.Duration
-	prev  int
-}
-
-func newRenderer() *renderer {
-	return &renderer{out: make(map[string]time.Duration)}
-}
-
-func (r *renderer) visitor(frame profiler.FrameInfo) {
-	if frame.Level > r.prev || (frame.Level == 0 && r.prev == 0) {
-		r.names = append(r.names, frame.Name)
-	} else {
-		r.complete()
-		if frame.Level == 0 {
-			r.names = []string{frame.Name}
-		} else {
-			r.names = append(r.names[:frame.Level], frame.Name)
-		}
+func dump(w io.Writer, samples map[string]time.Duration) {
+	names := make([]string, 0, len(samples))
+	for k := range samples {
+		names = append(names, k)
 	}
-	r.val = frame.SampledTime
-	r.prev = frame.Level
-}
-
-func (r *renderer) complete() {
-	if len(r.names) > 0 {
-		r.out[strings.Join(r.names, ";")] += r.val
+	sort.Strings(names)
+	for _, n := range names {
+		_, _ = fmt.Fprintln(w, n, samples[n].Nanoseconds())
 	}
-}
-
-func (r *renderer) dumpFlat(w io.Writer) {
-	r.complete()
-	s := make([]string, 0, len(r.out))
-	for k, v := range r.out {
-		s = append(s, fmt.Sprint(k, " ", v.Nanoseconds()))
-	}
-	sort.Strings(s)
-	for _, x := range s {
-		_, _ = fmt.Fprintln(w, x)
-	}
-}
-
-func (r *renderer) dumpTree(w io.Writer) func(profiler.FrameInfo) {
-	return func(frame profiler.FrameInfo) {
-		_, _ = fmt.Fprintf(w, "%s(%v) %s\n", padding(frame.Level), frame.SampledTime, frame.Name)
-	}
-}
-
-func padding(x int) string {
-	var s strings.Builder
-	for i := 0; i < x; i++ {
-		s.WriteString("\t")
-	}
-	return s.String()
 }

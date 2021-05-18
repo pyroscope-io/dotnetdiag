@@ -3,7 +3,8 @@ package profiler
 type thread struct {
 	lastBlockTime int64
 	lastCPUTime   int64
-	callTree
+	// StackID -> sampled time
+	samples map[int32]int64
 }
 
 type threadState int
@@ -27,7 +28,7 @@ func (t *thread) state() threadState {
 	}
 }
 
-func (t *thread) addSample(sampleType clrThreadSampleType, relativeTime int64, stack []uint64) {
+func (t *thread) addSample(sampleType clrThreadSampleType, relativeTime int64, stackID int32) {
 	switch sampleType {
 	case sampleTypeError:
 		return
@@ -35,12 +36,12 @@ func (t *thread) addSample(sampleType clrThreadSampleType, relativeTime int64, s
 	case sampleTypeManaged:
 		switch t.state() {
 		case uninitialized:
-			t.putCPUSample(stack, relativeTime)
+			t.putCPUSample(stackID, relativeTime)
 			t.lastBlockTime = -1
 		case running:
-			t.putCPUSample(stack, relativeTime)
+			t.putCPUSample(stackID, relativeTime)
 		case blocked:
-			t.putBlockSample(stack, relativeTime)
+			t.putBlockSample(stackID, relativeTime)
 			t.lastBlockTime = -relativeTime
 		}
 		t.lastCPUTime = relativeTime
@@ -48,66 +49,22 @@ func (t *thread) addSample(sampleType clrThreadSampleType, relativeTime int64, s
 	case sampleTypeExternal:
 		switch t.state() {
 		case blocked, uninitialized:
-			t.putBlockSample(stack, relativeTime)
+			t.putBlockSample(stackID, relativeTime)
 		case running:
-			t.putCPUSample(stack, relativeTime)
+			t.putCPUSample(stackID, relativeTime)
 		}
 		t.lastBlockTime = relativeTime
 	}
 }
 
-func (t *thread) putCPUSample(stack []uint64, rt int64) {
+func (t *thread) putCPUSample(stackID int32, rt int64) {
 	if t.lastCPUTime > 0 {
-		t.put(stack, t.lastCPUTime, rt)
+		t.samples[stackID] += t.lastCPUTime - rt
 	}
 }
 
-func (t *thread) putBlockSample(stack []uint64, rt int64) {
+func (t *thread) putBlockSample(stackID int32, rt int64) {
 	if t.lastBlockTime > 0 {
-		t.put(stack, t.lastBlockTime, rt)
-	}
-}
-
-type callTree []*frame
-
-type frame struct {
-	addr        uint64
-	sampledTime int64
-	callTree
-}
-
-func (t *callTree) put(stack []uint64, baseTime, relativeTime int64) {
-	if len(stack) == 0 {
-		return
-	}
-	i := len(stack) - 1
-	x := stack[i]
-	for _, f := range *t {
-		if f.addr != x {
-			continue
-		}
-		f.sampledTime += relativeTime - baseTime
-		if len(stack) > 1 {
-			f.put(stack[:i], baseTime, relativeTime)
-		}
-		return
-	}
-	f := &frame{addr: x, sampledTime: relativeTime - baseTime}
-	if len(stack) > 1 {
-		f.put(stack[:i], baseTime, relativeTime)
-	}
-	*t = append(*t, f)
-}
-
-func (t *callTree) walk(fn func(int, *frame)) {
-	for i, f := range *t {
-		if i > 0 {
-			fn(i-1, f)
-		} else {
-			fn(i, f)
-		}
-		f.walk(func(i int, n *frame) {
-			fn(i+1, n)
-		})
+		t.samples[stackID] += t.lastBlockTime - rt
 	}
 }
