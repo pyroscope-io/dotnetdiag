@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pyroscope-io/dotnetdiag/nettrace"
@@ -17,18 +18,21 @@ type SampleProfiler struct {
 	stacks  map[int32][]uint64
 	threads map[int64]*thread
 
-	samples samples
-}
-
-type FrameInfo struct {
-	ThreadID    int64
-	Level       int
-	SampledTime time.Duration
-	Addr        uint64
-	Name        string
+	events  events
+	samples []sample
 }
 
 type sample struct {
+	stack []uint64
+	val   int64
+}
+
+type FrameInfo struct {
+	SampledTime time.Duration
+	Name        string
+}
+
+type event struct {
 	typ          clrThreadSampleType
 	threadID     int64
 	stackID      int32
@@ -36,21 +40,21 @@ type sample struct {
 	relativeTime int64
 }
 
-type samples []*sample
+type events []*event
 
-func (s samples) Len() int { return len(s) }
+func (e events) Len() int { return len(e) }
 
-func (s samples) Less(i, j int) bool { return s[i].timestamp < s[j].timestamp }
+func (e events) Less(i, j int) bool { return e[i].timestamp < e[j].timestamp }
 
-func (s samples) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+func (e events) Swap(i, j int) { e[i], e[j] = e[j], e[i] }
 
-func (s *samples) Push(x interface{}) { *s = append(*s, x.(*sample)) }
+func (e *events) Push(x interface{}) { *e = append(*e, x.(*event)) }
 
-func (s *samples) Pop() interface{} {
-	old := *s
+func (e *events) Pop() interface{} {
+	old := *e
 	n := len(old)
 	x := old[n-1]
-	*s = old[0 : n-1]
+	*e = old[0 : n-1]
 	return x
 }
 
@@ -80,28 +84,16 @@ func NewSampleProfiler(trace *nettrace.Trace) *SampleProfiler {
 	}
 }
 
-func (s *SampleProfiler) Walk(fn func(FrameInfo)) {
-	for tid := range s.threads {
-		s.WalkThread(tid, fn)
+func (s *SampleProfiler) Samples() map[string]time.Duration {
+	samples := make(map[string]time.Duration)
+	for _, x := range s.samples {
+		name := make([]string, len(x.stack))
+		for i := range x.stack {
+			name[i] = s.sym.resolve(x.stack[i])
+		}
+		samples[strings.Join(name, ";")] += time.Duration(x.val * -1)
 	}
-}
-
-func (s *SampleProfiler) WalkThread(threadID int64, fn func(FrameInfo)) {
-	t, ok := s.threads[threadID]
-	if !ok {
-		return
-	}
-	t.walk(func(i int, n *frame) {
-		addr, _ := s.sym.resolveAddress(n.addr)
-		name, _ := s.sym.resolveString(addr)
-		fn(FrameInfo{
-			ThreadID:    threadID,
-			Addr:        n.addr,
-			Name:        name,
-			SampledTime: time.Duration(n.sampledTime),
-			Level:       i,
-		})
-	})
+	return samples
 }
 
 func (s *SampleProfiler) EventHandler(e *nettrace.Blob) error {
@@ -134,27 +126,27 @@ func (s *SampleProfiler) MetadataHandler(md *nettrace.Metadata) error {
 
 func (s *SampleProfiler) StackBlockHandler(sb *nettrace.StackBlock) error {
 	for _, stack := range sb.Stacks {
-		s.addStack(stack)
+		s.stacks[stack.ID] = stack.InstructionPointers(s.trace.PointerSize)
 	}
 	return nil
 }
 
 func (s *SampleProfiler) SequencePointBlockHandler(*nettrace.SequencePointBlock) error {
-	for s.samples.Len() != 0 {
-		x := heap.Pop(&s.samples).(*sample)
-		s.thread(x.threadID).addSample(x.typ, x.relativeTime, s.stacks[x.stackID])
+	for s.events.Len() != 0 {
+		x := heap.Pop(&s.events).(*event)
+		s.thread(x.threadID).addSample(x.typ, x.relativeTime, x.stackID)
+	}
+	for _, t := range s.threads {
+		for k, v := range t.samples {
+			s.samples = append(s.samples, sample{
+				stack: s.stacks[k],
+				val:   v,
+			})
+		}
+		t.samples = make(map[int32]int64)
 	}
 	s.stacks = make(map[int32][]uint64)
 	return nil
-}
-
-func (s *SampleProfiler) addStack(x nettrace.Stack) {
-	if s.trace.PointerSize == 8 {
-		s.stacks[x.ID] = x.InstructionPointers64()
-		return
-	}
-	s.stacks[x.ID] = x.InstructionPointers32()
-	return
 }
 
 func (s *SampleProfiler) addSample(e *nettrace.Blob) error {
@@ -162,7 +154,7 @@ func (s *SampleProfiler) addSample(e *nettrace.Blob) error {
 	if err := binary.Read(e.Payload, binary.LittleEndian, &d); err != nil {
 		return err
 	}
-	heap.Push(&s.samples, &sample{
+	heap.Push(&s.events, &event{
 		typ:          d.Type,
 		threadID:     e.Header.ThreadID,
 		stackID:      e.Header.StackID,
@@ -177,7 +169,7 @@ func (s *SampleProfiler) thread(tid int64) *thread {
 	if ok {
 		return t
 	}
-	t = new(thread)
+	t = &thread{samples: make(map[int32]int64)}
 	s.threads[tid] = t
 	return t
 }

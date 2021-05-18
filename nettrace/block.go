@@ -210,18 +210,24 @@ func SequencePointBlockFromObject(o Object) (*SequencePointBlock, error) {
 	return &b, p.Err()
 }
 
-func (s Stack) InstructionPointers64() []uint64 {
-	n := make([]uint64, len(s.Data)/8)
+func (s Stack) InstructionPointers(size int32) []uint64 {
+	var address func([]byte, int) uint64
+	if size == 8 {
+		address = address64
+	} else {
+		address = address32
+	}
+	n := make([]uint64, len(s.Data)/int(size))
 	for i := 0; i < len(n); i++ {
-		n[i] = binary.LittleEndian.Uint64(s.Data[i*8 : (i+1)*8])
+		n[len(n)-1-i] = address(s.Data, i)
 	}
 	return n
 }
 
-func (s Stack) InstructionPointers32() []uint64 {
-	n := make([]uint64, len(s.Data)/4)
-	for i := 0; i < len(n); i++ {
-		n[i] = uint64(binary.LittleEndian.Uint32(s.Data[i*4 : (i+1)*4]))
-	}
-	return n
+func address64(b []byte, i int) uint64 {
+	return binary.LittleEndian.Uint64(b[i*8 : (i+1)*8])
+}
+
+func address32(b []byte, i int) uint64 {
+	return uint64(binary.LittleEndian.Uint32(b[i*4 : (i+1)*4]))
 }
