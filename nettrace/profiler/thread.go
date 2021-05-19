@@ -1,10 +1,10 @@
 package profiler
 
 type thread struct {
-	lastBlockTime int64
-	lastCPUTime   int64
-	// StackID -> sampled time
-	samples map[int32]int64
+	lastExternalTime int64
+	lastManagedTime  int64
+	samples          map[int32]int64
+	managedOnly      bool
 }
 
 type threadState int
@@ -13,16 +13,16 @@ const (
 	_ threadState = iota - 1
 
 	uninitialized
-	running
-	blocked
+	managed
+	external
 )
 
 func (t *thread) state() threadState {
 	switch {
-	case t.lastBlockTime < 0:
-		return running
-	case t.lastBlockTime > 0:
-		return blocked
+	case t.lastExternalTime < 0:
+		return managed
+	case t.lastExternalTime > 0:
+		return external
 	default:
 		return uninitialized
 	}
@@ -36,35 +36,35 @@ func (t *thread) addSample(sampleType clrThreadSampleType, relativeTime int64, s
 	case sampleTypeManaged:
 		switch t.state() {
 		case uninitialized:
-			t.putCPUSample(stackID, relativeTime)
-			t.lastBlockTime = -1
-		case running:
-			t.putCPUSample(stackID, relativeTime)
-		case blocked:
-			t.putBlockSample(stackID, relativeTime)
-			t.lastBlockTime = -relativeTime
+			t.managedSample(stackID, relativeTime)
+			t.lastExternalTime = -1
+		case managed:
+			t.managedSample(stackID, relativeTime)
+		case external:
+			t.externalSample(stackID, relativeTime)
+			t.lastExternalTime = -relativeTime
 		}
-		t.lastCPUTime = relativeTime
+		t.lastManagedTime = relativeTime
 
 	case sampleTypeExternal:
 		switch t.state() {
-		case blocked, uninitialized:
-			t.putBlockSample(stackID, relativeTime)
-		case running:
-			t.putCPUSample(stackID, relativeTime)
+		case external, uninitialized:
+			t.externalSample(stackID, relativeTime)
+		case managed:
+			t.managedSample(stackID, relativeTime)
 		}
-		t.lastBlockTime = relativeTime
+		t.lastExternalTime = relativeTime
 	}
 }
 
-func (t *thread) putCPUSample(stackID int32, rt int64) {
-	if t.lastCPUTime > 0 {
-		t.samples[stackID] += t.lastCPUTime - rt
+func (t *thread) managedSample(stackID int32, rt int64) {
+	if t.lastManagedTime > 0 {
+		t.samples[stackID] += t.lastManagedTime - rt
 	}
 }
 
-func (t *thread) putBlockSample(stackID int32, rt int64) {
-	if t.lastBlockTime > 0 {
-		t.samples[stackID] += t.lastBlockTime - rt
+func (t *thread) externalSample(stackID int32, rt int64) {
+	if t.lastExternalTime > 0 && !t.managedOnly {
+		t.samples[stackID] += t.lastExternalTime - rt
 	}
 }

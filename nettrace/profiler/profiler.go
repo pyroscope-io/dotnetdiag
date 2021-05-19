@@ -10,6 +10,8 @@ import (
 	"github.com/pyroscope-io/dotnetdiag/nettrace"
 )
 
+// SampleProfiler processes event stream from Microsoft-DotNETCore-SampleProfiler
+// provider and calculates time for every call stack.
 type SampleProfiler struct {
 	trace *nettrace.Trace
 	sym   *symbols
@@ -20,16 +22,23 @@ type SampleProfiler struct {
 
 	events  events
 	samples []sample
+
+	managedOnly bool
+}
+
+type Option func(*SampleProfiler)
+
+// WithManagedCodeOnly prescribes SampleProfiler to ignore the time that
+// was spent in native (unmanaged) code.
+func WithManagedCodeOnly() Option {
+	return func(p *SampleProfiler) {
+		p.managedOnly = true
+	}
 }
 
 type sample struct {
 	stack []uint64
-	val   int64
-}
-
-type FrameInfo struct {
-	SampledTime time.Duration
-	Name        string
+	value int64
 }
 
 type event struct {
@@ -74,14 +83,18 @@ const (
 	sampleTypeManaged
 )
 
-func NewSampleProfiler(trace *nettrace.Trace) *SampleProfiler {
-	return &SampleProfiler{
+func NewSampleProfiler(trace *nettrace.Trace, options ...Option) *SampleProfiler {
+	p := &SampleProfiler{
 		trace:   trace,
 		sym:     newSymbols(),
 		md:      make(map[int32]*nettrace.Metadata),
 		threads: make(map[int64]*thread),
 		stacks:  make(map[int32][]uint64),
 	}
+	for _, option := range options {
+		option(p)
+	}
+	return p
 }
 
 func (s *SampleProfiler) Samples() map[string]time.Duration {
@@ -91,7 +104,7 @@ func (s *SampleProfiler) Samples() map[string]time.Duration {
 		for i := range x.stack {
 			name[i] = s.sym.resolve(x.stack[i])
 		}
-		samples[strings.Join(name, ";")] += time.Duration(x.val * -1)
+		samples[strings.Join(name, ";")] += time.Duration(x.value * -1)
 	}
 	return samples
 }
@@ -137,10 +150,10 @@ func (s *SampleProfiler) SequencePointBlockHandler(*nettrace.SequencePointBlock)
 		s.thread(x.threadID).addSample(x.typ, x.relativeTime, x.stackID)
 	}
 	for _, t := range s.threads {
-		for k, v := range t.samples {
+		for stackID, value := range t.samples {
 			s.samples = append(s.samples, sample{
-				stack: s.stacks[k],
-				val:   v,
+				stack: s.stacks[stackID],
+				value: value,
 			})
 		}
 		t.samples = make(map[int32]int64)
@@ -169,7 +182,10 @@ func (s *SampleProfiler) thread(tid int64) *thread {
 	if ok {
 		return t
 	}
-	t = &thread{samples: make(map[int32]int64)}
+	t = &thread{
+		samples:     make(map[int32]int64),
+		managedOnly: s.managedOnly,
+	}
 	s.threads[tid] = t
 	return t
 }
