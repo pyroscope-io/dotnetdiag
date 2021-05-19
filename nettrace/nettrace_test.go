@@ -15,20 +15,38 @@ import (
 )
 
 func TestNetTraceDecoding(t *testing.T) {
-	t.Run(".Net 5.0 SampleProfiler Web app", func(t *testing.T) {
-		requireEqual(t,
-			"testdata/dotnet-5.0-SampleProfiler-webapp.golden.nettrace",
-			"testdata/dotnet-5.0-SampleProfiler-webapp.txt")
-	})
+	t.Run(".Net 5.0 SampleProfiler", func(t *testing.T) {
+		t.Run("Web app", func(t *testing.T) {
+			t.Run("Managed code only", func(t *testing.T) {
+				requireEqual(t,
+					"testdata/dotnet-5.0-SampleProfiler-webapp.golden.nettrace",
+					"testdata/dotnet-5.0-SampleProfiler-webapp-managed-only.txt",
+					profiler.WithManagedCodeOnly())
+			})
+			t.Run("Managed and native code", func(t *testing.T) {
+				requireEqual(t,
+					"testdata/dotnet-5.0-SampleProfiler-webapp.golden.nettrace",
+					"testdata/dotnet-5.0-SampleProfiler-webapp.txt")
+			})
+		})
 
-	t.Run(".Net 5.0 SampleProfiler Simple single thread app", func(t *testing.T) {
-		requireEqual(t,
-			"testdata/dotnet-5.0-SampleProfiler-single-thread.golden.nettrace",
-			"testdata/dotnet-5.0-SampleProfiler-single-thread.txt")
+		t.Run("Simple single thread app", func(t *testing.T) {
+			t.Run("Managed code only", func(t *testing.T) {
+				requireEqual(t,
+					"testdata/dotnet-5.0-SampleProfiler-single-thread.golden.nettrace",
+					"testdata/dotnet-5.0-SampleProfiler-single-thread-managed-only.txt",
+					profiler.WithManagedCodeOnly())
+			})
+			t.Run("Managed and native code", func(t *testing.T) {
+				requireEqual(t,
+					"testdata/dotnet-5.0-SampleProfiler-single-thread.golden.nettrace",
+					"testdata/dotnet-5.0-SampleProfiler-single-thread.txt")
+			})
+		})
 	})
 }
 
-func requireEqual(t *testing.T, sample, expected string) {
+func requireEqual(t *testing.T, sample, expected string, options ...profiler.Option) {
 	t.Helper()
 
 	s, err := os.Open(sample)
@@ -40,7 +58,7 @@ func requireEqual(t *testing.T, sample, expected string) {
 	trace, err := stream.Open()
 	requireNoError(t, err)
 
-	p := profiler.NewSampleProfiler(trace)
+	p := profiler.NewSampleProfiler(trace, options...)
 	stream.EventHandler = p.EventHandler
 	stream.MetadataHandler = p.MetadataHandler
 	stream.StackBlockHandler = p.StackBlockHandler
