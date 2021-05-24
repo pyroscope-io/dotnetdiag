@@ -6,9 +6,28 @@ import (
 )
 
 // Client implement Diagnostic IPC Protocol client.
-// https://github.com/dotnet/diagnostics/blob/main/documentation/design-docs/ipc-protocol.md#CollectStreaming
+// https://github.com/dotnet/diagnostics/blob/main/documentation/design-docs/ipc-protocol.md
 type Client struct {
 	addr string
+	dial Dialer
+}
+
+// Dialer establishes connection to the given address. Due to the potential for
+// an optional continuation in the Diagnostics IPC Protocol, each successful
+// connection between the runtime and a Diagnostic Port is only usable once.
+//
+// Note that the dialer is OS-specific, refer to documentation for details:
+// https://github.com/dotnet/diagnostics/blob/main/documentation/design-docs/ipc-protocol.md#transport
+type Dialer func(addr string) (net.Conn, error)
+
+// Option overrides default Client parameters.
+type Option func(*Client)
+
+// WithDialer overrides default dialer function with d.
+func WithDialer(d Dialer) Option {
+	return func(c *Client) {
+		c.dial = d
+	}
 }
 
 // Session represents EventPipe stream of NetTrace data created with
@@ -44,8 +63,15 @@ type CollectTracingConfig struct {
 //
 // Refer to documentation for details:
 // https://github.com/dotnet/diagnostics/blob/main/documentation/design-docs/ipc-protocol.md#transport
-func NewClient(addr string) *Client {
-	return &Client{addr: addr}
+func NewClient(addr string, options ...Option) *Client {
+	c := &Client{addr: addr}
+	for _, option := range options {
+		option(c)
+	}
+	if c.dial == nil {
+		c.dial = DefaultDialer()
+	}
+	return c
 }
 
 // CollectTracing creates a new EventPipe session stream of NetTrace data.
@@ -53,7 +79,7 @@ func (c *Client) CollectTracing(config CollectTracingConfig) (s *Session, err er
 	// Every session has its own IPC connection which cannot be reused for any
 	// other purposes; in order to close the connection another connection
 	// to be opened - see `StopTracing`.
-	conn, err := dial(c.addr)
+	conn, err := c.dial(c.addr)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +115,7 @@ func (c *Client) CollectTracing(config CollectTracingConfig) (s *Session, err er
 
 // StopTracing stops the given streaming session started with CollectTracing.
 func (c *Client) StopTracing(sessionID uint64) error {
-	conn, err := dial(c.addr)
+	conn, err := c.dial(c.addr)
 	if err != nil {
 		return err
 	}
