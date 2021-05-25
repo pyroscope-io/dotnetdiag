@@ -1,4 +1,4 @@
-# .Net diagnostics
+# .NET diagnostics
 
 The package provides means for .Net runtime diagnostics implemented in Golang:
  - [Diagnostics IPC Protocol](https://github.com/dotnet/diagnostics/blob/main/documentation/design-docs/ipc-protocol.md#transport) client.
@@ -10,12 +10,12 @@ The package provides means for .Net runtime diagnostics implemented in Golang:
 # go get github.com/pyroscope-io/dotnetdiag
 ```
 
-Supported .Net versions:
- - .Net 5.0
- - .Net Core 3.1
+Supported .NET versions:
+ - .NET 5.0
+ - .NET Core 3.1
 
 Supported platforms:
- - [ ] Windows
+ - [x] Windows
  - [x] Linux
  - [x] MacOS
 

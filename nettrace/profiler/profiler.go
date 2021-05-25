@@ -104,7 +104,7 @@ func (s *SampleProfiler) Samples() map[string]time.Duration {
 		for i := range x.stack {
 			name[i] = s.sym.resolve(x.stack[i])
 		}
-		samples[strings.Join(name, ";")] += time.Duration(x.value * -1)
+		samples[strings.Join(name, ";")] += -time.Millisecond * time.Duration(x.value)
 	}
 	return samples
 }
@@ -172,7 +172,7 @@ func (s *SampleProfiler) addSample(e *nettrace.Blob) error {
 		threadID:     e.Header.ThreadID,
 		stackID:      e.Header.StackID,
 		timestamp:    e.Header.TimeStamp,
-		relativeTime: e.Header.TimeStamp - s.trace.SyncTimeQPC,
+		relativeTime: (e.Header.TimeStamp - s.trace.SyncTimeQPC) * 1000 / s.trace.QPCFrequency,
 	})
 	return nil
 }
