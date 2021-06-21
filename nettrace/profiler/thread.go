@@ -59,12 +59,12 @@ func (t *thread) addSample(sampleType clrThreadSampleType, relativeTime int64, s
 
 func (t *thread) managedSample(stackID int32, rt int64) {
 	if t.lastManagedTime > 0 {
-		t.samples[stackID] += t.lastManagedTime - rt
+		t.samples[stackID] += rt - t.lastManagedTime
 	}
 }
 
 func (t *thread) externalSample(stackID int32, rt int64) {
 	if t.lastExternalTime > 0 && !t.managedOnly {
-		t.samples[stackID] += t.lastExternalTime - rt
+		t.samples[stackID] += rt - t.lastExternalTime
 	}
 }

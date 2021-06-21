@@ -104,7 +104,7 @@ func (s *SampleProfiler) Samples() map[string]time.Duration {
 		for i := range x.stack {
 			name[i] = s.sym.resolve(x.stack[i])
 		}
-		samples[strings.Join(name, ";")] += -time.Millisecond * time.Duration(x.value)
+		samples[strings.Join(name, ";")] += time.Duration(x.value)
 	}
 	return samples
 }
@@ -162,17 +162,22 @@ func (s *SampleProfiler) SequencePointBlockHandler(*nettrace.SequencePointBlock)
 	return nil
 }
 
+// https://github.com/microsoft/perfview/blob/8a34d2d64bc958902b2fa8ea5799437df57d8de2/src/TraceEvent/TraceEvent.cs#L440-L460
 func (s *SampleProfiler) addSample(e *nettrace.Blob) error {
 	var d clrThreadSampleTraceData
 	if err := binary.Read(e.Payload, binary.LittleEndian, &d); err != nil {
 		return err
+	}
+	rel := e.Header.TimeStamp - s.trace.SyncTimeQPC
+	if rel < 0 {
+		return nil
 	}
 	heap.Push(&s.events, &event{
 		typ:          d.Type,
 		threadID:     e.Header.ThreadID,
 		stackID:      e.Header.StackID,
 		timestamp:    e.Header.TimeStamp,
-		relativeTime: (e.Header.TimeStamp - s.trace.SyncTimeQPC) * 1000 / s.trace.QPCFrequency,
+		relativeTime: rel * (int64(time.Second) / s.trace.QPCFrequency),
 	})
 	return nil
 }
