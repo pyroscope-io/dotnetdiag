@@ -22,6 +22,7 @@ Supported platforms:
 Implemented commands:
  - [x] StopTracing
  - [x] CollectTracing
+ - [x] ProcessInfo2
  - [ ] CollectTracing2
  - [ ] CreateCoreDump
  - [ ] AttachProfiler

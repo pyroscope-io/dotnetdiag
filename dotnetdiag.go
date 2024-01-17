@@ -40,6 +40,18 @@ const (
 )
 
 const (
+	ProcessProcessInfo uint8 = iota
+	ProcessResumeRuntime
+	ProcessProcessEnvironment
+	_ // 0x03 not used
+	ProcessProcessInfo2
+	ProcessEnablePerfMap
+	ProcessDisablePerfMap
+	ProcessApplyStartupHook
+	ProcessProcessInfo3
+)
+
+const (
 	_ = iota
 	EventPipeStopTracing
 	EventPipeCollectTracing
@@ -82,6 +94,16 @@ type StopTracingResponse struct {
 	SessionID uint64
 }
 
+type ProcessInfo2Response struct {
+	ProcessID      uint64
+	GUID           [16]byte
+	CommandLine    string
+	OS             string
+	Arch           string
+	AssemblyName   string
+	RuntimeVersion string
+}
+
 func writeMessage(w io.Writer, commandSet, commandID uint8, payload []byte) error {
 	bw := bufio.NewWriter(w)
 	err := binary.Write(bw, binary.LittleEndian, Header{
@@ -100,14 +122,25 @@ func writeMessage(w io.Writer, commandSet, commandID uint8, payload []byte) erro
 	return bw.Flush()
 }
 
-func readResponse(r io.Reader, v interface{}) error {
+func readResponseHeader(r io.Reader) (*Header, error) {
 	var h Header
 	if err := binary.Read(r, binary.LittleEndian, &h); err != nil {
+		return nil, err
+	}
+
+	if h.Magic != magic {
+		return nil, ErrHeaderMalformed
+	}
+
+	return &h, nil
+}
+
+func readResponse(r io.Reader, v interface{}) error {
+	h, err := readResponseHeader(r)
+	if err != nil {
 		return err
 	}
-	if h.Magic != magic {
-		return ErrHeaderMalformed
-	}
+
 	if !(h.CommandSet == CommandSetServer && h.CommandID == 0xFF) {
 		return binary.Read(r, binary.LittleEndian, v)
 	}

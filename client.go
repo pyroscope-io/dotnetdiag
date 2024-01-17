@@ -1,8 +1,13 @@
 package dotnetdiag
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
+
+	"github.com/pyroscope-io/dotnetdiag/nettrace"
 )
 
 // Client implement Diagnostic IPC Protocol client.
@@ -58,8 +63,8 @@ type CollectTracingConfig struct {
 // NewClient creates a new Diagnostic IPC Protocol client for the transport
 // specified - on Unix/Linux based platforms, a Unix Domain Socket will be used, and
 // on Windows, a Named Pipe will be used:
-//  - /tmp/dotnet-diagnostic-{%d:PID}-{%llu:disambiguation key}-socket (Linux/MacOS)
-//  - \\.\pipe\dotnet-diagnostic-{%d:PID} (Windows)
+//   - /tmp/dotnet-diagnostic-{%d:PID}-{%llu:disambiguation key}-socket (Linux/MacOS)
+//   - \\.\pipe\dotnet-diagnostic-{%d:PID} (Windows)
 //
 // Refer to documentation for details:
 // https://github.com/dotnet/diagnostics/blob/main/documentation/design-docs/ipc-protocol.md#transport
@@ -72,6 +77,56 @@ func NewClient(addr string, options ...Option) *Client {
 		c.dial = DefaultDialer()
 	}
 	return c
+}
+
+func (c *Client) ProcessInfo2() (*ProcessInfo2Response, error) {
+	conn, err := c.dial(c.addr)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	if err = writeMessage(conn, CommandSetProcess, ProcessProcessInfo2, nil); err != nil {
+		return nil, err
+	}
+
+	var resp ProcessInfo2Response
+	header, err := readResponseHeader(conn)
+	if err != nil {
+		return nil, err
+	}
+
+	if header.CommandSet != CommandSetServer || header.CommandID != 00 {
+		return nil, fmt.Errorf("unexpected response header: commandSet=%v (expected 0xff) commandID=%v (expected 0x00)", header.CommandSet, header.CommandID)
+	}
+
+	buf := bytes.NewBuffer(nil)
+	if _, err := io.CopyN(buf, conn, int64(header.Size-headerSize)); err != nil {
+		return nil, err
+	}
+
+	if err := binary.Read(buf, binary.LittleEndian, &resp.ProcessID); err != nil {
+		return nil, fmt.Errorf("unable to read process ID: %w", err)
+	}
+
+	if err := binary.Read(buf, binary.LittleEndian, &resp.GUID); err != nil {
+		return nil, fmt.Errorf("unable to read process ID: %w", err)
+	}
+
+	// now parse the strings out
+	p := &nettrace.Parser{Buffer: buf}
+	p.UTF16NTS()
+	resp.CommandLine = p.UTF16NTS()
+	p.UTF16NTS()
+	resp.OS = p.UTF16NTS()
+	p.UTF16NTS()
+	resp.Arch = p.UTF16NTS()
+	p.UTF16NTS()
+	resp.AssemblyName = p.UTF16NTS()
+	p.UTF16NTS()
+	resp.RuntimeVersion = p.UTF16NTS()
+
+	return &resp, nil
 }
 
 // CollectTracing creates a new EventPipe session stream of NetTrace data.
